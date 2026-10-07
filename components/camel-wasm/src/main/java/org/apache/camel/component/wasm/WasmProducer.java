@@ -16,26 +16,26 @@
  */
 package org.apache.camel.component.wasm;
 
-import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
 
 import org.apache.camel.Endpoint;
 import org.apache.camel.Exchange;
-import org.apache.camel.spi.Resource;
-import org.apache.camel.spi.ResourceLoader;
 import org.apache.camel.support.DefaultProducer;
-import org.apache.camel.support.PluginHelper;
 import org.apache.camel.wasm.WasmFunction;
+import org.apache.camel.wasm.WasmRuntime;
 import org.apache.camel.wasm.WasmSupport;
-import run.endive.wasm.Parser;
-import run.endive.wasm.WasmModule;
 
+/**
+ * Calls an exported function of the module using the camel-wasm memory ABI (mode=function).
+ */
 public class WasmProducer extends DefaultProducer {
 
     private final String functionModule;
     private final String functionName;
 
-    private WasmModule module;
+    private WasmRuntime runtime;
     private WasmFunction function;
+    private ExecutorService executor;
 
     public WasmProducer(Endpoint endpoint, String functionModule, String functionName) throws Exception {
         super(endpoint);
@@ -45,21 +45,25 @@ public class WasmProducer extends DefaultProducer {
     }
 
     @Override
-    public void doInit() throws Exception {
-        final ResourceLoader rl = PluginHelper.getResourceLoader(getEndpoint().getCamelContext());
-        final Resource res = rl.resolveResource(this.functionModule);
+    public WasmEndpoint getEndpoint() {
+        return (WasmEndpoint) super.getEndpoint();
+    }
 
-        try (InputStream is = res.getInputStream()) {
-            this.module = Parser.parse(is);
-        }
+    @Override
+    public void doInit() throws Exception {
+        this.runtime = getEndpoint().runtime();
     }
 
     @Override
     public void doStart() throws Exception {
         super.doStart();
 
-        if (this.module != null && this.function == null) {
-            this.function = new WasmFunction(this.module, this.functionName);
+        if (this.runtime != null && this.function == null) {
+            this.function = new WasmFunction(this.runtime, this.functionName);
+        }
+        if (getEndpoint().getConfiguration().getTimeout() > 0 && executor == null) {
+            executor = getEndpoint().getCamelContext().getExecutorServiceManager()
+                    .newCachedThreadPool(this, "WasmGuest[" + functionName + "]");
         }
     }
 
@@ -67,6 +71,10 @@ public class WasmProducer extends DefaultProducer {
     public void doStop() throws Exception {
         super.doStop();
 
+        if (executor != null) {
+            getEndpoint().getCamelContext().getExecutorServiceManager().shutdownNow(executor);
+            executor = null;
+        }
         this.function = null;
     }
 
@@ -75,14 +83,20 @@ public class WasmProducer extends DefaultProducer {
         super.doShutdown();
 
         this.function = null;
-        this.module = null;
+        this.runtime = null;
     }
 
     @Override
     public void process(Exchange exchange) throws Exception {
         byte[] in = WasmSupport.serialize(exchange);
-        byte[] result = function.run(in);
+        WasmFunction fn = this.function;
+        byte[] result = WasmInvoker.call(executor, getEndpoint().getConfiguration().getTimeout(), exchange,
+                () -> fn.run(in));
 
         WasmSupport.deserialize(result, exchange);
+    }
+
+    public String getFunctionModule() {
+        return functionModule;
     }
 }

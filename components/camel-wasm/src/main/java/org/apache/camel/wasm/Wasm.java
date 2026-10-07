@@ -16,16 +16,32 @@
  */
 package org.apache.camel.wasm;
 
+import org.apache.camel.spi.Metadata;
+
 public final class Wasm {
     public static final String SCHEME = "wasm";
     public static final String FN_ALLOC = "alloc";
     public static final String FN_DEALLOC = "dealloc";
+
+    public static final String MODE_FUNCTION = "function";
+    public static final String MODE_WASI = "wasi";
 
     private Wasm() {
     }
 
     public static class Headers {
 
+        @Metadata(label = "producer",
+                  description = "The exit code of the WASI program (wasi mode only). Always set by the component, so a"
+                                + " value carried by an inbound message never survives the call.",
+                  javaType = "Integer")
+        public static final String EXIT_CODE = "CamelWasmExitCode";
+
+        @Metadata(label = "producer",
+                  description = "What the WASI program wrote to standard error, decoded as UTF-8 and truncated to 8 KiB"
+                                + " (wasi mode only). Removed when the program wrote nothing.",
+                  javaType = "String")
+        public static final String STDERR = "CamelWasmStderr";
     }
 
 }

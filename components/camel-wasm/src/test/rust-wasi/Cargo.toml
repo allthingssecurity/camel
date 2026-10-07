@@ -1,0 +1,45 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Tiny test guests for camel-wasm: a WASI preview1 command module (mode=wasi)
+# and an import-free function-mode module (see wasi_guest.rs and build.sh).
+#
+# It is a no_std crate built for wasm32-unknown-unknown that declares the
+# wasi_snapshot_preview1 imports itself, so the binary stays a few KB and
+# building it needs no extra Rust target. A regular std program built with
+# `cargo build --target wasm32-wasip1` imports the same functions and runs the
+# same way (see the component documentation).
+
+[package]
+name    = "wasi_guest"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+path = "wasi_guest.rs"
+
+[features]
+command = []
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+codegen-units = 1

@@ -17606,7 +17606,8 @@ public class StaticEndpointBuilders {
      * Syntax: <code>wasm:functionName</code>
      * 
      * Path parameter: functionName (required)
-     * The Function Name
+     * The name of the exported function to call. In wasi mode, the name passed
+     * to the program as argument zero.
      * 
      * @param path functionName
      * @return the dsl builder
@@ -17625,7 +17626,8 @@ public class StaticEndpointBuilders {
      * Syntax: <code>wasm:functionName</code>
      * 
      * Path parameter: functionName (required)
-     * The Function Name
+     * The name of the exported function to call. In wasi mode, the name passed
+     * to the program as argument zero.
      * 
      * @param componentName to use a custom component name for the endpoint
      * instead of the default name

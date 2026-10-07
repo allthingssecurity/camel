@@ -4720,3 +4720,11 @@ consumes `AiToolResult` and handles its variants exhaustively — for example an
 `AiToolResult.ExecutionError` — must add a branch for `AuthorizationDenied` and relay its `message()` to the model as
 a refusal (do not rethrow). The in-tree adapters (camel-openai, camel-spring-ai-chat, camel-langchain4j-agent and the
 MCP server bridge) already handle it.
+
+=== camel-wasm - the module instance is replaced after a trap
+
+In the default `function` mode, one instance of the module serves every exchange of an endpoint or expression.
+Until now that instance kept serving after the guest function trapped (for example a Rust `panic!`), along with
+whatever the guest had allocated before it stopped. It is now discarded after a trap or an interruption and the next
+exchange gets a fresh instance, so state that the module keeps in its memory or globals no longer survives a failed
+call.

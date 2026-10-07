@@ -45,6 +45,28 @@ public interface WasmEndpointBuilderFactory {
         }
 
         /**
+         * How the module is invoked. In function mode (the default) the
+         * endpoint calls the exported function named in the URI path using the
+         * camel-wasm memory ABI (alloc/dealloc and a JSON envelope of headers
+         * and body). In wasi mode the module is a WASI preview1 command (for
+         * example a Rust or Go program compiled to wasm32-wasip1): it runs once
+         * per exchange with the message body as standard input, and its
+         * standard output becomes the message body. The URI path is then passed
+         * to the program as its name (argument zero).
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Default: function
+         * Group: producer
+         * 
+         * @param mode the value to set
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder mode(String mode) {
+            doSetProperty("mode", mode);
+            return this;
+        }
+        /**
          * Set the module (the distributable, loadable, and executable unit of
          * code in WebAssembly) resource that provides the producer function.
          * 
@@ -58,6 +80,123 @@ public interface WasmEndpointBuilderFactory {
          */
         default WasmEndpointBuilder module(String module) {
             doSetProperty("module", module);
+            return this;
+        }
+        /**
+         * The command line arguments passed to a WASI program (wasi mode only),
+         * separated by whitespace. Use double quotes around an argument that
+         * contains whitespace. The arguments are fixed by the route; they
+         * cannot be set from message headers.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Group: wasi
+         * 
+         * @param args the value to set
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder args(String args) {
+            doSetProperty("args", args);
+            return this;
+        }
+        /**
+         * Environment variables for a WASI program (wasi mode only), for
+         * example environment.LOG_LEVEL=debug. The program sees no environment
+         * variables other than these and the ones listed in environmentHeaders;
+         * the environment of the JVM is never passed through. This is a
+         * multi-value option with prefix: environment.
+         * 
+         * The option is a: <code>java.util.Map&lt;java.lang.String,
+         * java.lang.Object&gt;</code> type.
+         * The option is multivalued, and you can use the environment(String,
+         * Object) method to add a value (call the method multiple times to set
+         * more values).
+         * 
+         * Group: wasi
+         * 
+         * @param key the option key
+         * @param value the option value
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder environment(String key, Object value) {
+            doSetMultiValueProperty("environment", "environment." + key, value);
+            return this;
+        }
+        /**
+         * Environment variables for a WASI program (wasi mode only), for
+         * example environment.LOG_LEVEL=debug. The program sees no environment
+         * variables other than these and the ones listed in environmentHeaders;
+         * the environment of the JVM is never passed through. This is a
+         * multi-value option with prefix: environment.
+         * 
+         * The option is a: <code>java.util.Map&lt;java.lang.String,
+         * java.lang.Object&gt;</code> type.
+         * The option is multivalued, and you can use the environment(String,
+         * Object) method to add a value (call the method multiple times to set
+         * more values).
+         * 
+         * Group: wasi
+         * 
+         * @param values the values
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder environment(Map values) {
+            doSetMultiValueProperties("environment", "environment.", values);
+            return this;
+        }
+        /**
+         * A comma separated allow-list of message headers whose values are
+         * passed to a WASI program as environment variables of the same name
+         * (wasi mode only). Headers usually come from whoever sent the message,
+         * so no header is passed unless it is listed here. A listed header that
+         * is absent is left unset; a header name may not also be configured in
+         * environment.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Group: wasi
+         * 
+         * @param environmentHeaders the value to set
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder environmentHeaders(String environmentHeaders) {
+            doSetProperty("environmentHeaders", environmentHeaders);
+            return this;
+        }
+        /**
+         * Whether a WASI program that exits with a non-zero exit code fails the
+         * exchange (wasi mode only). When false, the standard output still
+         * replaces the body and the exit code is available in the
+         * CamelWasmExitCode header.
+         * 
+         * The option is a: <code>boolean</code> type.
+         * 
+         * Default: true
+         * Group: wasi
+         * 
+         * @param failOnNonZeroExit the value to set
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder failOnNonZeroExit(boolean failOnNonZeroExit) {
+            doSetProperty("failOnNonZeroExit", failOnNonZeroExit);
+            return this;
+        }
+        /**
+         * Whether a WASI program that exits with a non-zero exit code fails the
+         * exchange (wasi mode only). When false, the standard output still
+         * replaces the body and the exit code is available in the
+         * CamelWasmExitCode header.
+         * 
+         * The option will be converted to a <code>boolean</code> type.
+         * 
+         * Default: true
+         * Group: wasi
+         * 
+         * @param failOnNonZeroExit the value to set
+         * @return the dsl builder
+         */
+        default WasmEndpointBuilder failOnNonZeroExit(String failOnNonZeroExit) {
+            doSetProperty("failOnNonZeroExit", failOnNonZeroExit);
             return this;
         }
     }
@@ -118,6 +257,118 @@ public interface WasmEndpointBuilderFactory {
             doSetProperty("lazyStartProducer", lazyStartProducer);
             return this;
         }
+        /**
+         * Whether to translate the module to JVM bytecode when the endpoint
+         * starts, instead of interpreting it. Compiled modules typically run an
+         * order of magnitude faster, at the cost of a slower start (the
+         * translation runs once per endpoint) and more metaspace.
+         * 
+         * The option is a: <code>boolean</code> type.
+         * 
+         * Default: false
+         * Group: advanced
+         * 
+         * @param compile the value to set
+         * @return the dsl builder
+         */
+        default AdvancedWasmEndpointBuilder compile(boolean compile) {
+            doSetProperty("compile", compile);
+            return this;
+        }
+        /**
+         * Whether to translate the module to JVM bytecode when the endpoint
+         * starts, instead of interpreting it. Compiled modules typically run an
+         * order of magnitude faster, at the cost of a slower start (the
+         * translation runs once per endpoint) and more metaspace.
+         * 
+         * The option will be converted to a <code>boolean</code> type.
+         * 
+         * Default: false
+         * Group: advanced
+         * 
+         * @param compile the value to set
+         * @return the dsl builder
+         */
+        default AdvancedWasmEndpointBuilder compile(String compile) {
+            doSetProperty("compile", compile);
+            return this;
+        }
+        /**
+         * The maximum size of the module's linear memory, in WebAssembly pages
+         * of 64 KiB. Compilers such as Rust and Go declare no maximum by
+         * default, which allows a module to grow to 4 GiB of JVM heap. When the
+         * limit is reached, memory growth fails inside the module, which then
+         * usually traps or exits with an error. 0 (the default) keeps the limit
+         * declared by the module. The value must not be lower than the initial
+         * size the module declares.
+         * 
+         * The option is a: <code>int</code> type.
+         * 
+         * Group: advanced
+         * 
+         * @param maxMemoryPages the value to set
+         * @return the dsl builder
+         */
+        default AdvancedWasmEndpointBuilder maxMemoryPages(int maxMemoryPages) {
+            doSetProperty("maxMemoryPages", maxMemoryPages);
+            return this;
+        }
+        /**
+         * The maximum size of the module's linear memory, in WebAssembly pages
+         * of 64 KiB. Compilers such as Rust and Go declare no maximum by
+         * default, which allows a module to grow to 4 GiB of JVM heap. When the
+         * limit is reached, memory growth fails inside the module, which then
+         * usually traps or exits with an error. 0 (the default) keeps the limit
+         * declared by the module. The value must not be lower than the initial
+         * size the module declares.
+         * 
+         * The option will be converted to a <code>int</code> type.
+         * 
+         * Group: advanced
+         * 
+         * @param maxMemoryPages the value to set
+         * @return the dsl builder
+         */
+        default AdvancedWasmEndpointBuilder maxMemoryPages(String maxMemoryPages) {
+            doSetProperty("maxMemoryPages", maxMemoryPages);
+            return this;
+        }
+        /**
+         * The maximum time an invocation of the module may run. When it is
+         * exceeded the module is interrupted, the exchange fails with an
+         * ExchangeTimedOutException and the instance is discarded. The module
+         * runs on a separate thread when a timeout is set. 0 (the default)
+         * means no timeout.
+         * 
+         * The option is a: <code>long</code> type.
+         * 
+         * Group: advanced
+         * 
+         * @param timeout the value to set
+         * @return the dsl builder
+         */
+        default AdvancedWasmEndpointBuilder timeout(long timeout) {
+            doSetProperty("timeout", timeout);
+            return this;
+        }
+        /**
+         * The maximum time an invocation of the module may run. When it is
+         * exceeded the module is interrupted, the exchange fails with an
+         * ExchangeTimedOutException and the instance is discarded. The module
+         * runs on a separate thread when a timeout is set. 0 (the default)
+         * means no timeout.
+         * 
+         * The option will be converted to a <code>long</code> type.
+         * 
+         * Group: advanced
+         * 
+         * @param timeout the value to set
+         * @return the dsl builder
+         */
+        default AdvancedWasmEndpointBuilder timeout(String timeout) {
+            doSetProperty("timeout", timeout);
+            return this;
+        }
     }
 
     public interface WasmBuilders {
@@ -129,10 +380,24 @@ public interface WasmEndpointBuilderFactory {
          * Since: 4.4
          * Maven coordinates: org.apache.camel:camel-wasm
          * 
+         * @return the dsl builder for the headers' name.
+         */
+        default WasmHeaderNameBuilder wasm() {
+            return WasmHeaderNameBuilder.INSTANCE;
+        }
+        /**
+         * Wasm (camel-wasm)
+         * Invoke Wasm functions.
+         * 
+         * Category: core,script
+         * Since: 4.4
+         * Maven coordinates: org.apache.camel:camel-wasm
+         * 
          * Syntax: <code>wasm:functionName</code>
          * 
          * Path parameter: functionName (required)
-         * The Function Name
+         * The name of the exported function to call. In wasi mode, the name
+         * passed to the program as argument zero.
          * 
          * @param path functionName
          * @return the dsl builder
@@ -151,7 +416,8 @@ public interface WasmEndpointBuilderFactory {
          * Syntax: <code>wasm:functionName</code>
          * 
          * Path parameter: functionName (required)
-         * The Function Name
+         * The name of the exported function to call. In wasi mode, the name
+         * passed to the program as argument zero.
          * 
          * @param componentName to use a custom component name for the endpoint
          * instead of the default name
@@ -162,6 +428,45 @@ public interface WasmEndpointBuilderFactory {
             return WasmEndpointBuilderFactory.endpointBuilder(componentName, path);
         }
 
+    }
+    /**
+     * The builder of headers' name for the Wasm component.
+     */
+    public static class WasmHeaderNameBuilder {
+        /**
+         * The internal instance of the builder used to access to all the
+         * methods representing the name of headers.
+         */
+        public static final WasmHeaderNameBuilder INSTANCE = new WasmHeaderNameBuilder();
+
+        /**
+         * The exit code of the WASI program (wasi mode only). Always set by the
+         * component, so a value carried by an inbound message never survives
+         * the call.
+         * 
+         * The option is a: {@code Integer} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code WasmExitCode}.
+         */
+        public String wasmExitCode() {
+            return "CamelWasmExitCode";
+        }
+        /**
+         * What the WASI program wrote to standard error, decoded as UTF-8 and
+         * truncated to 8 KiB (wasi mode only). Removed when the program wrote
+         * nothing.
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code WasmStderr}.
+         */
+        public String wasmStderr() {
+            return "CamelWasmStderr";
+        }
     }
     static WasmEndpointBuilder endpointBuilder(String componentName, String path) {
         class WasmEndpointBuilderImpl extends AbstractEndpointBuilder implements WasmEndpointBuilder, AdvancedWasmEndpointBuilder {

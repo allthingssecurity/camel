@@ -16,6 +16,9 @@
 https://webassembly.org[WebAssembly (Wasm)] is a low-level bytecode format designed as a portable target for the compilation of high-level languages like C, C++, and Rust, enabling deployment on the web for client and server applications.
 
 This component provides support to leverage Wasm functions for message transformation.
+It can either call an exported function of a module (the default `function` mode), or run a
+https://wasi.dev[WASI] program, such as a Rust, Go or C program compiled to `wasm32-wasip1`, as a
+sandboxed processor (`mode=wasi`).
 
 Maven users will need to add the following dependency to their `pom.xml`
 for this component:
@@ -34,6 +37,8 @@ for this component:
 ----
 wasm://functionName?[options]
 ----
+
+In `wasi` mode the path is not a function name: it is passed to the program as its name (argument zero).
 
 // component options: START
 include::partial$component-configure-options.adoc[]
@@ -151,6 +156,120 @@ pub extern fn process(ptr: u32, len: u32) -> u64 {
     return ((out_ptr as u64) << 32) | out_len as u64;
 }
 ----
+
+=== Running WASI programs
+
+With `mode=wasi` the module is a WASI preview1 _command_: a program with a `_start` entry point, as produced by
+`cargo build --target wasm32-wasip1` for a Rust binary crate, `GOOS=wasip1 GOARCH=wasm go build` for Go, or
+`clang --target=wasm32-wasip1` with the WASI SDK for C. No camel-wasm specific code is needed in the program.
+
+For every exchange the component runs the program once, on a fresh instance:
+
+* the message body is the program's standard input (an empty body is an empty input),
+* what the program writes to standard output becomes the message body (as `byte[]`); other headers are kept,
+* the exit code is stored in the `CamelWasmExitCode` header; a non-zero exit code fails the exchange with a
+  `WasiExitCodeException` and leaves the body unchanged, unless `failOnNonZeroExit=false`,
+* what the program writes to standard error is stored in the `CamelWasmStderr` header (at most 8 KiB) and logged
+  at DEBUG level,
+* a trap (for example a Rust panic) fails the exchange with the runtime's `TrapException`.
+
+Here is a complete Rust program that upper-cases its input:
+
+[source,rust]
+----
+use std::io::{self, Read, Write};
+
+fn main() {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).expect("read stdin");
+    io::stdout().write_all(input.to_uppercase().as_bytes()).expect("write stdout");
+}
+----
+
+Built with `cargo build --release --target wasm32-wasip1` (after `rustup target add wasm32-wasip1`), it is used as:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+from("direct:in")
+    .to("wasm:upper?module=classpath:upper.wasm&mode=wasi&timeout=5000&maxMemoryPages=256");
+----
+
+YAML::
++
+[source,yaml]
+----
+- route:
+    from:
+      uri: direct:in
+      steps:
+        - to:
+            uri: wasm:upper
+            parameters:
+              module: classpath:upper.wasm
+              mode: wasi
+              args: --lenient
+              environment.LOG_LEVEL: info
+              environmentHeaders: TENANT
+              timeout: 5000
+              maxMemoryPages: 256
+----
+====
+
+==== What the program can access
+
+A WASI program only gets what the route gives it:
+
+* *Arguments*: the endpoint path as argument zero, then the `args` option, split on whitespace (use double quotes
+  around an argument that contains spaces). Arguments are fixed by the route and cannot be set from headers.
+* *Environment variables*: only those configured with `environment.NAME=value`, plus the headers listed in
+  `environmentHeaders`, each passed under its own name. Message headers usually come from whoever sent the message,
+  so none is passed unless it is listed. The JVM's own environment is never passed.
+* *Files and network*: none. There are no preopened directories, so the program cannot open any file, and socket
+  calls fail.
+* *Clock and random numbers*: the host's.
+
+==== Notes
+
+* The program runs to completion for every exchange, so it keeps no state between exchanges and concurrent
+  exchanges never share an instance. Programs with a long start-up (the Go runtime, for example) pay that cost on
+  every exchange; see `compile` below.
+* Standard output is buffered in memory until the program exits.
+* The `wasm` language does not support `wasi` mode.
+
+=== Limits
+
+Both modes support two limits, which protect the route from a module that misbehaves on some input:
+
+* `maxMemoryPages`: the maximum size of the module's linear memory, in 64 KiB pages. Rust, Go and C toolchains
+  declare no maximum by default, which lets a module grow to 4 GiB of JVM heap. When the limit is reached, memory
+  growth fails inside the module, which usually traps or exits with an error.
+* `timeout`: the maximum time, in milliseconds, one invocation may run. When it is exceeded, the module is interrupted
+  and the exchange fails with an `ExchangeTimedOutException`. With a timeout the module runs on a separate thread.
+
+Instruction counting ("fuel") is not supported by the runtime; use `timeout` instead.
+
+In `function` mode one instance of the module serves every exchange of the endpoint, one at a time. After a trap or
+a timeout that instance is discarded and the next exchange gets a fresh one, so any state the module kept in its
+memory or globals is lost.
+
+=== Compiling the module
+
+By default the module is interpreted. With `compile=true` it is translated to JVM bytecode once, when the endpoint
+starts, which typically makes it an order of magnitude faster at the cost of a slower start and more metaspace. Both
+limits apply to compiled modules as well.
+
+=== Security
+
+The module is code chosen by the route author, and like any other route code it is trusted: it runs in the JVM with
+the WebAssembly sandbox around it, but the component does not protect against a malicious module. The message
+body and headers are untrusted input, and the defaults keep them away from anything the module could misuse: in
+`wasi` mode no headers become environment variables unless they are listed in `environmentHeaders`, arguments cannot
+come from headers, and the program has no file system or network access. Use `maxMemoryPages` and `timeout` to bound
+the memory and time a module can use for one message.
 
 == Examples
 

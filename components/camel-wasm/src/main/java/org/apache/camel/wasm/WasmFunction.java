@@ -27,33 +27,30 @@ import run.endive.wasm.WasmModule;
 public class WasmFunction implements AutoCloseable {
     private final Lock lock;
 
-    private final WasmModule module;
+    private final WasmRuntime runtime;
     private final String functionName;
 
-    private final Instance instance;
-    private final ExportFunction function;
-    private final ExportFunction alloc;
-    private final ExportFunction dealloc;
+    private Instance instance;
+    private ExportFunction function;
+    private ExportFunction alloc;
+    private ExportFunction dealloc;
 
     public WasmFunction(WasmModule module, String functionName) {
+        this(new WasmRuntime(module, 0, false), functionName);
+    }
+
+    public WasmFunction(WasmRuntime runtime, String functionName) {
         this.lock = new ReentrantLock();
 
-        this.module = Objects.requireNonNull(module);
+        this.runtime = Objects.requireNonNull(runtime);
         this.functionName = Objects.requireNonNull(functionName);
 
-        this.instance = Instance.builder(this.module).build();
-        this.function = this.instance.export(this.functionName);
-        this.alloc = this.instance.export(Wasm.FN_ALLOC);
-        this.dealloc = this.instance.export(Wasm.FN_DEALLOC);
+        // fail fast on a missing export
+        bind();
     }
 
     public byte[] run(byte[] in) throws Exception {
         Objects.requireNonNull(in);
-
-        int inPtr = -1;
-        int inSize = in.length;
-        int outPtr = -1;
-        int outSize = 0;
 
         //
         // Wasm execution is not thread safe so we must put a
@@ -61,34 +58,48 @@ public class WasmFunction implements AutoCloseable {
         //
         lock.lock();
         try {
+            if (instance == null) {
+                bind();
+            }
+
+            final int inSize = in.length;
+            final byte[] out;
+            String guestError = null;
+
             try {
-                inPtr = (int) alloc.apply(inSize)[0];
+                int inPtr = (int) alloc.apply(inSize)[0];
                 instance.memory().write(inPtr, in);
 
                 long[] results = function.apply(inPtr, inSize);
                 long ptrAndSize = results[0];
 
-                outPtr = (int) (ptrAndSize >> 32);
-                outSize = (int) ptrAndSize;
+                int outPtr = (int) (ptrAndSize >> 32);
+                int outSize = (int) ptrAndSize;
 
                 // assume the max output is 31 bit, leverage the first bit for
                 // error detection
                 if (isError(outSize)) {
-                    int errSize = errSize(outSize);
-                    String errData = instance.memory().readString(outPtr, errSize);
-
-                    throw new RuntimeException(errData);
+                    outSize = errSize(outSize);
+                    guestError = instance.memory().readString(outPtr, outSize);
+                    out = null;
+                } else {
+                    out = instance.memory().readBytes(outPtr, outSize);
                 }
 
-                return instance.memory().readBytes(outPtr, outSize);
-            } finally {
-                if (inPtr != -1) {
-                    dealloc.apply(inPtr, inSize);
-                }
-                if (outPtr != -1) {
-                    dealloc.apply(outPtr, outSize);
-                }
+                dealloc.apply(inPtr, inSize);
+                dealloc.apply(outPtr, outSize);
+            } catch (RuntimeException | Error e) {
+                // A trap, an interruption (timeout) or a failed memory growth leaves the guest's heap in a state
+                // the host cannot repair: whatever the guest allocated before it stopped is unknown here. Throw
+                // the instance away; the next call gets a fresh one.
+                discard();
+                throw e;
             }
+
+            if (guestError != null) {
+                throw new RuntimeException(guestError);
+            }
+            return out;
         } finally {
             lock.unlock();
         }
@@ -96,6 +107,26 @@ public class WasmFunction implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        lock.lock();
+        try {
+            discard();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void bind() {
+        this.instance = runtime.instanceBuilder().build();
+        this.function = this.instance.export(this.functionName);
+        this.alloc = this.instance.export(Wasm.FN_ALLOC);
+        this.dealloc = this.instance.export(Wasm.FN_DEALLOC);
+    }
+
+    private void discard() {
+        this.instance = null;
+        this.function = null;
+        this.alloc = null;
+        this.dealloc = null;
     }
 
     private static boolean isError(int number) {

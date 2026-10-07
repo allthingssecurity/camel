@@ -24,6 +24,7 @@ import org.apache.camel.spi.Metadata;
 import org.apache.camel.spi.annotations.Component;
 import org.apache.camel.support.DefaultComponent;
 import org.apache.camel.util.ObjectHelper;
+import org.apache.camel.util.PropertiesHelper;
 import org.apache.camel.wasm.Wasm;
 
 @Component(Wasm.SCHEME)
@@ -61,6 +62,11 @@ public class WasmComponent extends DefaultComponent {
         }
 
         WasmConfiguration configuration = this.configuration.copy();
+
+        Map<String, Object> environment = PropertiesHelper.extractProperties(parameters, "environment.");
+        if (!environment.isEmpty()) {
+            configuration.setEnvironment(environment);
+        }
 
         WasmEndpoint endpoint = new WasmEndpoint(uri, this, remaining, configuration);
         setProperties(endpoint, parameters);

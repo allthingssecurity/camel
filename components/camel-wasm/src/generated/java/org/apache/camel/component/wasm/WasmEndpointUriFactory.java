@@ -24,14 +24,24 @@ public class WasmEndpointUriFactory extends org.apache.camel.support.component.E
     private static final Set<String> ENDPOINT_IDENTITY_PROPERTY_NAMES;
     private static final Map<String, String> MULTI_VALUE_PREFIXES;
     static {
-        Set<String> props = new HashSet<>(3);
+        Set<String> props = new HashSet<>(11);
+        props.add("args");
+        props.add("compile");
+        props.add("environment");
+        props.add("environmentHeaders");
+        props.add("failOnNonZeroExit");
         props.add("functionName");
         props.add("lazyStartProducer");
+        props.add("maxMemoryPages");
+        props.add("mode");
         props.add("module");
+        props.add("timeout");
         PROPERTY_NAMES = Collections.unmodifiableSet(props);
         SECRET_PROPERTY_NAMES = Collections.emptySet();
         ENDPOINT_IDENTITY_PROPERTY_NAMES = Collections.emptySet();
-        MULTI_VALUE_PREFIXES = Collections.emptyMap();
+        Map<String, String> prefixes = new HashMap<>(1);
+        prefixes.put("environment", "environment.");
+        MULTI_VALUE_PREFIXES = Collections.unmodifiableMap(prefixes);
     }
 
     @Override

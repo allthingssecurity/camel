@@ -4030,6 +4030,19 @@ public class EndpointHeaderBuilders {
         return VertxWebsocketEndpointBuilderFactory.VertxWebsocketHeaderNameBuilder.INSTANCE;
     }
     /**
+     * Wasm (camel-wasm)
+     * Invoke Wasm functions.
+     * 
+     * Category: core,script
+     * Since: 4.4
+     * Maven coordinates: org.apache.camel:camel-wasm
+     * 
+     * @return the dsl builder for the headers' name.
+     */
+    public static WasmEndpointBuilderFactory.WasmHeaderNameBuilder wasm() {
+        return WasmEndpointBuilderFactory.WasmHeaderNameBuilder.INSTANCE;
+    }
+    /**
      * Weather (camel-weather)
      * Poll the weather information from Open Weather Map.
      * 
