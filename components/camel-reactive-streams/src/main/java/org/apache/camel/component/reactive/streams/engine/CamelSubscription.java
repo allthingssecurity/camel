@@ -143,17 +143,23 @@ public class CamelSubscription implements Subscription {
                 checkAndFlush();
             });
         } else {
+            List<Exchange> bufferCopy = null;
             mutex.lock();
-            boolean shouldComplete = terminating && !terminated;
-            if (shouldComplete) {
-                terminated = true;
+            try {
+                if (terminating && !terminated) {
+                    terminated = true;
+                    // take the buffered exchanges as cancel() does, so that each one is discarded once
+                    bufferCopy = new LinkedList<>(buffer);
+                    buffer.clear();
+                }
+            } finally {
+                mutex.unlock();
             }
-            mutex.unlock();
 
-            if (shouldComplete) {
+            if (bufferCopy != null) {
                 this.publisher.unsubscribe(this);
                 this.subscriber.onComplete();
-                discardBuffer(this.buffer);
+                discardBuffer(bufferCopy);
             }
         }
     }

@@ -18,14 +18,19 @@ package org.apache.camel.component.reactive.streams;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.reactive.streams.api.CamelReactiveStreams;
+import org.apache.camel.component.reactive.streams.engine.CamelPublisher;
 import org.apache.camel.component.reactive.streams.engine.CamelSubscription;
+import org.apache.camel.support.DefaultExchange;
 import org.junit.jupiter.api.Test;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -81,6 +86,43 @@ class CancelSubscriptionTest extends BaseReactiveTest {
         assertEquals(List.of(), subscriber.received);
     }
 
+    @Test
+    void testCancelAfterCompletionDoesNotDiscardTheBufferedExchangesAgain() throws Exception {
+        CamelPublisher publisher = new CamelPublisher(
+                context.getExecutorServiceManager().newSingleThreadExecutor(this, "completion"), context, "completion");
+        TestSubscriber subscriber = new TestSubscriber(false);
+        publisher.subscribe(subscriber);
+        CamelSubscription subscription = (CamelSubscription) subscriber.subscription;
+
+        // nothing is requested, so the exchanges stay in the buffer of the subscription. They are published to the
+        // subscription itself, so that the callbacks count every discard of the subscription (CamelPublisher.publish
+        // would wrap them in a callback that counts down the subscriptions)
+        Map<Integer, AtomicInteger> discarded = new ConcurrentHashMap<>();
+        for (int i = 1; i <= 2; i++) {
+            Exchange exchange = new DefaultExchange(context);
+            exchange.getIn().setBody(i);
+            AtomicInteger count = new AtomicInteger();
+            discarded.put(i, count);
+            ReactiveStreamsHelper.attachCallback(exchange, (data, error) -> count.incrementAndGet());
+            subscription.publish(exchange);
+        }
+        assertEquals(2, subscription.getBufferSize());
+
+        // closing the publisher completes the subscription and discards the buffered exchanges
+        publisher.close();
+        long bufferSizeAfterCompletion = subscription.getBufferSize();
+        assertTrue(subscriber.completed);
+        assertEquals(1, discarded.get(1).get());
+        assertEquals(1, discarded.get(2).get());
+
+        // a cancel after the completion must not discard them again (rules 2.4 and 3.7 of the specification)
+        subscription.cancel();
+        assertEquals(1, discarded.get(1).get(), "Exchange 1 discarded more than once");
+        assertEquals(1, discarded.get(2).get(), "Exchange 2 discarded more than once");
+        assertEquals(0, bufferSizeAfterCompletion);
+        assertEquals(List.of(), subscriber.received);
+    }
+
     private List<CompletableFuture<Exchange>> sendAndWaitBuffered(TestSubscriber subscriber, int count) {
         List<CompletableFuture<Exchange>> sent = new ArrayList<>();
         for (int i = 1; i <= count; i++) {
@@ -110,6 +152,7 @@ class CancelSubscriptionTest extends BaseReactiveTest {
         private final List<Integer> received = new CopyOnWriteArrayList<>();
         private volatile Subscription subscription;
         private volatile Throwable error;
+        private volatile boolean completed;
 
         private TestSubscriber(boolean cancelOnFirst) {
             this.cancelOnFirst = cancelOnFirst;
@@ -135,7 +178,7 @@ class CancelSubscriptionTest extends BaseReactiveTest {
 
         @Override
         public void onComplete() {
-            // noop
+            this.completed = true;
         }
     }
 }
