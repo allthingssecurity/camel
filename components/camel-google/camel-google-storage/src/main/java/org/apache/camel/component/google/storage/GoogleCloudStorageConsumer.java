@@ -21,6 +21,8 @@ import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.api.gax.paging.Page;
 import com.google.cloud.storage.Blob;
@@ -29,6 +31,7 @@ import com.google.cloud.storage.Bucket;
 import com.google.cloud.storage.CopyWriter;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.Storage.CopyRequest;
+import com.google.cloud.storage.StorageException;
 import org.apache.camel.CamelContext;
 import org.apache.camel.Exchange;
 import org.apache.camel.ExchangePattern;
@@ -52,6 +55,8 @@ public class GoogleCloudStorageConsumer extends ScheduledBatchPollingConsumer {
     private static final Logger LOG = LoggerFactory.getLogger(GoogleCloudStorageConsumer.class);
 
     private final Language language;
+    // objects whose exchanges are being processed, which a later poll must not consume again
+    private final Set<String> inProgress = ConcurrentHashMap.newKeySet();
 
     public GoogleCloudStorageConsumer(GoogleCloudStorageEndpoint endpoint, Processor processor) {
         super(endpoint, processor);
@@ -140,8 +145,7 @@ public class GoogleCloudStorageConsumer extends ScheduledBatchPollingConsumer {
 
     protected Queue<Exchange> createExchanges(Blob blob, String key) {
         Queue<Exchange> answer = new LinkedList<>();
-        Exchange exchange = createExchange(blob, key);
-        answer.add(exchange);
+        addExchange(blob, key, answer);
         return answer;
     }
 
@@ -156,7 +160,7 @@ public class GoogleCloudStorageConsumer extends ScheduledBatchPollingConsumer {
                 if (includeObject(blob)) {
                     String key = blob.getBlobId().getName();
                     try {
-                        answer.add(createExchange(blob, key));
+                        addExchange(blob, key, answer);
                     } catch (IllegalArgumentException e) {
                         // the object name is rejected as a local download path: skip this object only, so a single
                         // object with such a name does not stop the rest of the bucket from being consumed
@@ -169,10 +173,42 @@ public class GoogleCloudStorageConsumer extends ScheduledBatchPollingConsumer {
             }
         } catch (Exception e) {
             LOG.warn("Error getting object due: {}", e.getMessage(), e);
+            // none of the objects of this poll is processed
+            releaseInProgress(answer);
             throw e;
         }
 
         return answer;
+    }
+
+    private void addExchange(Blob blob, String key, Queue<Exchange> answer) {
+        // skip the object if an exchange of a previous poll is still processing it
+        if (!inProgress.add(key)) {
+            LOG.trace("Skipping object {} as it is already in progress", key);
+            return;
+        }
+        try {
+            answer.add(createExchange(blob, key));
+        } catch (RuntimeException e) {
+            inProgress.remove(key);
+            if (isNotFound(e)) {
+                // deleted (for example by another consumer) after it was listed
+                LOG.debug("Skipping object {} as it no longer exists", key);
+                return;
+            }
+            throw e;
+        }
+    }
+
+    private static boolean isNotFound(Exception e) {
+        StorageException se = ObjectHelper.getException(StorageException.class, e);
+        return se != null && se.getCode() == 404;
+    }
+
+    private void releaseInProgress(Queue<?> notProcessed) {
+        for (Object exchange : notProcessed) {
+            inProgress.remove(((Exchange) exchange).getIn().getHeader(GoogleCloudStorageConstants.OBJECT_NAME, String.class));
+        }
     }
 
     /**
@@ -208,14 +244,23 @@ public class GoogleCloudStorageConsumer extends ScheduledBatchPollingConsumer {
             // update pending number of exchanges
             pendingExchanges = total - index - 1;
 
+            final String key = exchange.getIn().getHeader(GoogleCloudStorageConstants.OBJECT_NAME, String.class);
             // add on completion to handle after work when the exchange is done
             exchange.getExchangeExtension().addOnCompletion(new Synchronization() {
                 public void onComplete(Exchange exchange) {
-                    processCommit(exchange);
+                    try {
+                        processCommit(exchange);
+                    } finally {
+                        inProgress.remove(key);
+                    }
                 }
 
                 public void onFailure(Exchange exchange) {
-                    processRollback(exchange);
+                    try {
+                        processRollback(exchange);
+                    } finally {
+                        inProgress.remove(key);
+                    }
                 }
 
                 @Override
@@ -228,6 +273,8 @@ public class GoogleCloudStorageConsumer extends ScheduledBatchPollingConsumer {
             defaultConsumerCallback(exchange, true);
             getAsyncProcessor().process(exchange, EmptyAsyncCallback.get());
         }
+        // the remaining exchanges are not processed as the consumer is stopping
+        releaseInProgress(exchanges);
 
         return total;
     }
