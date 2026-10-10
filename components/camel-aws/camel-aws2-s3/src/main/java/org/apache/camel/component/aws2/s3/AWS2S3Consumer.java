@@ -16,6 +16,7 @@
  */
 package org.apache.camel.component.aws2.s3;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -124,23 +125,19 @@ public class AWS2S3Consumer extends ScheduledBatchPollingConsumer {
         if (!doneFileCheckPasses(bucketName, doneFileName)) {
             exchanges = new LinkedList<>();
         } else if (fileName != null) {
-            LOG.trace("Getting object in bucket [{}] with file name [{}]...", bucketName, fileName);
-
-            GetObjectRequest.Builder getRequest = GetObjectRequest.builder().bucket(bucketName).key(fileName);
-            if (getConfiguration().isUseCustomerKey()) {
-                if (ObjectHelper.isNotEmpty(getConfiguration().getCustomerKeyId())) {
-                    getRequest.sseCustomerKey(getConfiguration().getCustomerKeyId());
-                }
-                if (ObjectHelper.isNotEmpty(getConfiguration().getCustomerKeyMD5())) {
-                    getRequest.sseCustomerKeyMD5(getConfiguration().getCustomerKeyMD5());
-                }
-                if (ObjectHelper.isNotEmpty(getConfiguration().getCustomerAlgorithm())) {
-                    getRequest.sseCustomerAlgorithm(getConfiguration().getCustomerAlgorithm());
+            // check if file is already in progress (add false = duplicate file)
+            if (!getEndpoint().getInProgressRepository().add(fileName)) {
+                LOG.trace("Skipping as s3 object is already in progress: {}", fileName);
+                exchanges = new LinkedList<>();
+            } else {
+                try {
+                    exchanges = createExchanges(getObject(bucketName, fileName), fileName);
+                } catch (Exception e) {
+                    // remove in progress as we failed
+                    getEndpoint().getInProgressRepository().remove(fileName);
+                    throw e;
                 }
             }
-            ResponseInputStream<GetObjectResponse> s3Object
-                    = getAmazonS3Client().getObject(getRequest.build());
-            exchanges = createExchanges(s3Object, fileName);
         } else {
             LOG.trace("Queueing objects in bucket [{}]...", bucketName);
 
@@ -201,6 +198,24 @@ public class AWS2S3Consumer extends ScheduledBatchPollingConsumer {
         forceConsumerAsReady();
 
         return processBatch(CastUtils.cast(exchanges));
+    }
+
+    private ResponseInputStream<GetObjectResponse> getObject(String bucketName, String fileName) {
+        LOG.trace("Getting object in bucket [{}] with file name [{}]...", bucketName, fileName);
+
+        GetObjectRequest.Builder getRequest = GetObjectRequest.builder().bucket(bucketName).key(fileName);
+        if (getConfiguration().isUseCustomerKey()) {
+            if (ObjectHelper.isNotEmpty(getConfiguration().getCustomerKeyId())) {
+                getRequest.sseCustomerKey(getConfiguration().getCustomerKeyId());
+            }
+            if (ObjectHelper.isNotEmpty(getConfiguration().getCustomerKeyMD5())) {
+                getRequest.sseCustomerKeyMD5(getConfiguration().getCustomerKeyMD5());
+            }
+            if (ObjectHelper.isNotEmpty(getConfiguration().getCustomerAlgorithm())) {
+                getRequest.sseCustomerAlgorithm(getConfiguration().getCustomerAlgorithm());
+            }
+        }
+        return getAmazonS3Client().getObject(getRequest.build());
     }
 
     private boolean doneFileCheckPasses(String bucketName, String doneFileName) {
@@ -360,6 +375,17 @@ public class AWS2S3Consumer extends ScheduledBatchPollingConsumer {
             // use default consumer callback
             AsyncCallback cb = defaultConsumerCallback(exchange, true);
             getAsyncProcessor().process(exchange, cb);
+        }
+        // the remaining exchanges are not processed as the consumer is stopping: a later poll must consume their
+        // objects again, and with includeBody=false their bodies are the object streams, which nothing else closes
+        for (Object exchange : exchanges) {
+            String key = ((Exchange) exchange).getProperty(AWS2S3Constants.KEY, String.class);
+            if (key != null) {
+                getEndpoint().getInProgressRepository().remove(key);
+            }
+            if (((Exchange) exchange).getIn().getBody() instanceof Closeable body) {
+                IOHelper.close(body);
+            }
         }
 
         return total;
