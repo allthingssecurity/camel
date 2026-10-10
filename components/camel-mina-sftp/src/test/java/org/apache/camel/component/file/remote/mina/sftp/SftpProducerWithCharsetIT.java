@@ -19,6 +19,7 @@ package org.apache.camel.component.file.remote.mina.sftp;
 import java.io.File;
 
 import org.apache.camel.Exchange;
+import org.apache.camel.builder.RouteBuilder;
 import org.apache.commons.io.FileUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -49,6 +50,25 @@ public class SftpProducerWithCharsetIT extends SftpServerTestSupport {
 
         String storedPayload = FileUtils.readFileToString(file, SAMPLE_FILE_CHARSET);
         assertEquals(SAMPLE_FILE_PAYLOAD, storedPayload);
+    }
+
+    @Test
+    public void testProducerWithCharsetInRoute() throws Exception {
+        // the exchange comes from another endpoint, so it does not carry the charset of the sftp endpoint
+        context.addRoutes(new RouteBuilder() {
+            @Override
+            public void configure() {
+                from("direct:start").to(getSftpUri());
+            }
+        });
+
+        template.sendBodyAndHeader("direct:start", SAMPLE_FILE_PAYLOAD, Exchange.FILE_NAME, SAMPLE_FILE_NAME);
+
+        File file = new File(service.getFtpRootDir() + "/" + SAMPLE_FILE_NAME);
+        assertTrue(file.exists(), "The uploaded file should exist");
+
+        String storedPayload = FileUtils.readFileToString(file, SAMPLE_FILE_CHARSET);
+        assertEquals(SAMPLE_FILE_PAYLOAD, storedPayload, "The file must be written in the charset of the endpoint");
     }
 
     private String getSftpUri() {
