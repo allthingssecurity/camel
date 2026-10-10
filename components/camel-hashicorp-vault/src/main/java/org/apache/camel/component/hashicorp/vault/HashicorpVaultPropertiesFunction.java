@@ -16,9 +16,9 @@
  */
 package org.apache.camel.component.hashicorp.vault;
 
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.camel.CamelContext;
 import org.apache.camel.CamelContextAware;
@@ -84,7 +84,8 @@ public class HashicorpVaultPropertiesFunction extends ServiceSupport implements 
             = "CAMEL_HASHICORP_VAULT_NAMESPACE";
     private CamelContext camelContext;
     private VaultTemplate client;
-    private final Set<String> secrets = new HashSet<>();
+    private final Set<String> secrets = ConcurrentHashMap.newKeySet();
+    private final Map<String, Integer> secretVersions = new ConcurrentHashMap<>();
 
     private String engine;
     private String namespace;
@@ -216,8 +217,9 @@ public class HashicorpVaultPropertiesFunction extends ServiceSupport implements 
     }
 
     private String getSecretFromSource(String key, String subkey, String defaultValue, String version) {
-        // capture name of secret
-        secrets.add(key);
+        // capture name of secret in the form the refresh task reads the metadata of
+        String secretName = trackedSecretName(engine, key);
+        secrets.add(secretName);
 
         String returnValue = null;
         try {
@@ -235,6 +237,9 @@ public class HashicorpVaultPropertiesFunction extends ServiceSupport implements 
             VaultResponse rawSecret = client.read(completePath);
             if (ObjectHelper.isNotEmpty(rawSecret)) {
                 returnValue = rawSecret.getData().get("data").toString();
+                if (ObjectHelper.isEmpty(version)) {
+                    captureVersion(secretName, rawSecret);
+                }
             }
             if (ObjectHelper.isNotEmpty(subkey)) {
                 Object field = ((Map) rawSecret.getData().get("data")).get(subkey);
@@ -257,6 +262,24 @@ public class HashicorpVaultPropertiesFunction extends ServiceSupport implements 
         return returnValue;
     }
 
+    /**
+     * The name of a secret as the refresh task tracks it: engine:secret, or only the secret for the default secret
+     * engine
+     */
+    private static String trackedSecretName(String secretEngine, String key) {
+        return "secret".equals(secretEngine) ? key : secretEngine + ":" + key;
+    }
+
+    private void captureVersion(String secretName, VaultResponse rawSecret) {
+        if (rawSecret.getData().get("metadata") instanceof Map<?, ?> metadata && metadata.get("version") != null) {
+            try {
+                secretVersions.put(secretName, Integer.valueOf(metadata.get("version").toString()));
+            } catch (NumberFormatException e) {
+                // ignore, the refresh task then uses the version it reads first
+            }
+        }
+    }
+
     @Override
     public void setCamelContext(CamelContext camelContext) {
         this.camelContext = camelContext;
@@ -268,9 +291,17 @@ public class HashicorpVaultPropertiesFunction extends ServiceSupport implements 
     }
 
     /**
-     * Ids of the secrets in use
+     * Ids of the secrets in use, as engine:secret, or only the secret for the default secret engine
      */
     public Set<String> getSecrets() {
         return secrets;
+    }
+
+    /**
+     * The version of the secret (named as in {@link #getSecrets()}) that was last resolved, or null if not known (such
+     * as when a specific version was requested).
+     */
+    public Integer getSecretVersion(String secretName) {
+        return secretVersions.get(secretName);
     }
 }
