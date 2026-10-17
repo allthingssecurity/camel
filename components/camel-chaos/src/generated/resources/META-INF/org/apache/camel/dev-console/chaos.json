@@ -26,7 +26,7 @@
       "autowired": false,
       "secret": false,
       "defaultValue": "report",
-      "description": "What to do: report (default), add, remove, clear, reset, expect"
+      "description": "What to do: report (default), add, remove, clear, reset, expect, invariant"
     },
     "atCall": {
       "index": 1,
@@ -155,8 +155,22 @@
       "secret": false,
       "description": "Endpoint pattern for fail and latency rules (wildcard or regex, as in intercept)"
     },
-    "probability": {
+    "predicate": {
       "index": 10,
+      "kind": "option",
+      "displayName": "Predicate",
+      "group": "query",
+      "label": "query",
+      "required": false,
+      "type": "string",
+      "javaType": "java.lang.String",
+      "deprecated": false,
+      "autowired": false,
+      "secret": false,
+      "description": "Invariant: a predicate in the simple language every exchange of routeId must match when it completes"
+    },
+    "probability": {
+      "index": 11,
       "kind": "option",
       "displayName": "Probability",
       "group": "query",
@@ -171,7 +185,7 @@
       "description": "Probability (0..1) that a matching call gets the fault"
     },
     "routeId": {
-      "index": 11,
+      "index": 12,
       "kind": "option",
       "displayName": "Route Id",
       "group": "query",
@@ -185,7 +199,7 @@
       "description": "Route id for a stall rule"
     },
     "type": {
-      "index": 12,
+      "index": 13,
       "kind": "option",
       "displayName": "Type",
       "group": "query",

@@ -79,5 +79,11 @@
             <artifactId>camel-management</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- chaos tests of the circuit breaker (camel-chaos prototype: TLA+ invariants and Z3-chosen faults) -->
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-chaos</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

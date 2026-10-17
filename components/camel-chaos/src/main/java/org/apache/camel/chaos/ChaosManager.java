@@ -40,7 +40,9 @@ import org.apache.camel.Consumer;
 import org.apache.camel.EndpointAware;
 import org.apache.camel.Exchange;
 import org.apache.camel.ExchangeExtension;
+import org.apache.camel.ExchangePropertyKey;
 import org.apache.camel.NamedNode;
+import org.apache.camel.Predicate;
 import org.apache.camel.Processor;
 import org.apache.camel.ServiceStatus;
 import org.apache.camel.health.HealthCheck;
@@ -90,6 +92,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     private final Map<String, RouteStats> routeStats = new ConcurrentHashMap<>();
     private final List<Map<String, Object>> timeline = new CopyOnWriteArrayList<>();
     private final List<Expectation> expectations = new CopyOnWriteArrayList<>();
+    private final List<Invariant> invariants = new CopyOnWriteArrayList<>();
     private ScheduledExecutorService scheduler;
     private final ChaosEventNotifier notifier = new ChaosEventNotifier();
 
@@ -296,6 +299,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         ruleSeq.set(0);
         rules.clear();
         expectations.clear();
+        invariants.clear();
         routeStats.clear();
         timeline.clear();
     }
@@ -591,6 +595,15 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             fail |= "FAIL".equals(jo.get("result"));
         }
         root.put("expectations", el);
+        if (!invariants.isEmpty()) {
+            List<Object> il = new ArrayList<>();
+            for (Invariant inv : invariants) {
+                JsonObject jo = inv.toJson();
+                il.add(jo);
+                fail |= "FAIL".equals(jo.get("result"));
+            }
+            root.put("invariants", il);
+        }
         root.put("result", fail ? "FAIL" : running ? "RUNNING" : "PASS");
         root.put("healthNow", healthSnapshot());
         root.put("timeline", new ArrayList<>(timeline));
@@ -657,6 +670,82 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         return List.copyOf(expectations);
     }
 
+    /**
+     * States a property that every exchange of the route must have when it completes or fails (for example "a timed-out
+     * call is answered by the fallback, and only by the fallback"). Each violation is counted and makes the report
+     * FAIL. This is how an invariant of a model (TLA+) becomes a check of a chaos run.
+     */
+    public synchronized Invariant invariant(String routeId, String name, Predicate predicate) {
+        if (routeId == null || camelContext.getRoute(routeId) == null) {
+            throw new IllegalArgumentException("Invariant needs an existing routeId: " + routeId);
+        }
+        Invariant inv = new Invariant(routeId, name != null ? name : "invariant-" + (invariants.size() + 1), predicate);
+        invariants.add(inv);
+        event("invariant-added", null, routeId + " " + inv.name);
+        return inv;
+    }
+
+    /**
+     * As {@link #invariant(String, String, Predicate)}, with the predicate in the simple language (dev console).
+     */
+    public Invariant invariant(String routeId, String name, String simplePredicate) {
+        Predicate p = camelContext.resolveLanguage("simple").createPredicate(simplePredicate);
+        return invariant(routeId, name, p);
+    }
+
+    public List<Invariant> getInvariants() {
+        return List.copyOf(invariants);
+    }
+
+    public final class Invariant {
+        private final String routeId;
+        private final String name;
+        private final Predicate predicate;
+        private final AtomicLong checked = new AtomicLong();
+        private final AtomicLong violated = new AtomicLong();
+        private final List<String> firstViolations = new CopyOnWriteArrayList<>();
+
+        Invariant(String routeId, String name, Predicate predicate) {
+            this.routeId = routeId;
+            this.name = name;
+            this.predicate = predicate;
+        }
+
+        void check(Exchange exchange) {
+            checked.incrementAndGet();
+            boolean ok;
+            try {
+                ok = predicate.matches(exchange);
+            } catch (Exception e) {
+                ok = false;
+            }
+            if (!ok) {
+                violated.incrementAndGet();
+                if (firstViolations.size() < 5) {
+                    firstViolations.add(exchange.getExchangeId());
+                }
+            }
+        }
+
+        public long getChecked() {
+            return checked.get();
+        }
+
+        public long getViolated() {
+            return violated.get();
+        }
+
+        JsonObject toJson() {
+            JsonObject jo = new JsonObject();
+            jo.put("routeId", routeId);
+            jo.put("name", name);
+            jo.put("checked", checked.get());
+            jo.put("violated", violated.get());
+            jo.put("result", violated.get() > 0 ? "FAIL" : activeRules.isEmpty() ? "PASS" : "RUNNING");
+            return jo;
+        }
+    }
+
     public final class Expectation {
         private final String routeId;
         private final long count;
@@ -720,6 +809,14 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
                 sb.append(String.format("  %-12s expected>=%s completed=%s lost=%s result=%s%n", jo.get("routeId"),
                         jo.get("expectedExchanges"), jo.get("completedExchanges"), jo.get("lostMessages"),
                         jo.get("result")));
+            }
+        }
+        if (!invariants.isEmpty()) {
+            sb.append(String.format("%nInvariants:%n"));
+            for (Invariant inv : invariants) {
+                JsonObject jo = inv.toJson();
+                sb.append(String.format("  %-12s %-24s checked=%s violated=%s result=%s%n", jo.get("routeId"),
+                        jo.get("name"), jo.get("checked"), jo.get("violated"), jo.get("result")));
             }
         }
         sb.append(String.format("%nResult: %s%n", report().get("result")));
@@ -836,7 +933,23 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             if (routeId == null) {
                 return;
             }
+            Object correlationId = ee.getExchange().getProperty(ExchangePropertyKey.CORRELATION_ID);
+            if (correlationId != null && !correlationId.equals(ee.getExchange().getExchangeId())) {
+                // a correlated copy made by an EIP (the task of a circuit breaker, a multicast or split part): the
+                // message is counted once, by the exchange that entered the route (which may carry its own id as
+                // correlation id after the copy's results were copied back)
+                return;
+            }
             RouteStats s = stats(routeId);
+            if (!invariants.isEmpty()
+                    && (event instanceof CamelEvent.ExchangeCompletedEvent
+                            || event instanceof CamelEvent.ExchangeFailedEvent)) {
+                for (Invariant inv : invariants) {
+                    if (routeId.equals(inv.routeId)) {
+                        inv.check(ee.getExchange());
+                    }
+                }
+            }
             if (event instanceof CamelEvent.ExchangeRedeliveryEvent) {
                 s.redeliveries.incrementAndGet();
             } else if (event instanceof CamelEvent.ExchangeFailureHandledEvent) {

@@ -33,7 +33,7 @@ import org.apache.camel.util.json.JsonObject;
             readOnly = false)
 public class ChaosDevConsole extends AbstractDevConsole {
 
-    @Metadata(label = "query", description = "What to do: report (default), add, remove, clear, reset, expect",
+    @Metadata(label = "query", description = "What to do: report (default), add, remove, clear, reset, expect, invariant",
               defaultValue = "report")
     public static final String ACTION = "action";
     @Metadata(label = "query", description = "Rule type for add: fail, latency, stall", defaultValue = "fail")
@@ -64,6 +64,9 @@ public class ChaosDevConsole extends AbstractDevConsole {
     @Metadata(label = "query", description = "Expect: the number of exchanges the route must still complete",
               javaType = "java.lang.Long")
     public static final String COUNT = "count";
+    @Metadata(label = "query",
+              description = "Invariant: a predicate in the simple language every exchange of routeId must match when it completes")
+    public static final String PREDICATE = "predicate";
     @Metadata(label = "query", description = "Rule id (add: optional, remove: required)")
     public static final String ID = "id";
 
@@ -136,6 +139,13 @@ public class ChaosDevConsole extends AbstractDevConsole {
                     long count = optionLong(options, COUNT, 0);
                     manager.expect(routeId, count);
                     answer.put("result", "expecting " + count + " more exchanges on route " + routeId);
+                }
+                case "invariant" -> {
+                    String routeId = optionString(options, ROUTE_ID);
+                    String predicate = optionString(options, PREDICATE);
+                    ChaosManager.Invariant inv = manager.invariant(routeId, optionString(options, ID), predicate);
+                    answer.put("result", "checking invariant on route " + routeId + ": " + predicate);
+                    answer.put("invariant", inv.toJson().get("name"));
                 }
                 case "report" -> {
                     // report only
