@@ -1,0 +1,15 @@
+{
+  "other": {
+    "kind": "other",
+    "name": "chaos",
+    "title": "Chaos",
+    "description": "Dev\/test-only fault injection for Camel applications (prototype)",
+    "deprecated": false,
+    "firstVersion": "4.24.0",
+    "label": "tooling,testing",
+    "supportLevel": "Preview",
+    "groupId": "org.apache.camel",
+    "artifactId": "camel-chaos",
+    "version": "4.24.0-SNAPSHOT"
+  }
+}

@@ -393,6 +393,8 @@ public class LocalCliConnector extends ServiceSupport
                 doActionTransformersTask();
             } else if ("vault-refresh".equals(action)) {
                 doActionVaultRefreshTask();
+            } else if ("chaos".equals(action)) {
+                doActionChaosTask(root);
             } else {
                 return false;
             }
@@ -1058,6 +1060,32 @@ public class LocalCliConnector extends ServiceSupport
             writeOutput(json);
         } else {
             writeOutput(new JsonObject());
+        }
+    }
+
+    private void doActionChaosTask(JsonObject root) throws IOException {
+        // the chaos dev console is in camel-chaos (dev/test only); it is absent unless that jar is on the classpath
+        DevConsole dc = camelContext.getCamelContextExtension().getContextPlugin(DevConsoleRegistry.class)
+                .resolveById("chaos");
+        if (dc != null) {
+            Map<String, Object> params = new HashMap<>();
+            // "action" is taken by the connector protocol (it is "chaos"), so the chaos action comes as "command"
+            String command = root.getString("command");
+            params.put("action", command != null ? command : "report");
+            for (String key : List.of("type", "pattern", "routeId", "probability", "calls", "delay", "duration",
+                    "exception", "message", "id")) {
+                String value = root.getString(key);
+                if (value != null) {
+                    params.put(key, value);
+                }
+            }
+            JsonObject json = (JsonObject) dc.call(DevConsole.MediaType.JSON, params);
+            if (json.get("error") != null) {
+                json.put("status", "failed");
+            }
+            writeOutput(json);
+        } else {
+            reportError("chaos dev console not found: add camel-chaos (dev/test only) to the application");
         }
     }
 

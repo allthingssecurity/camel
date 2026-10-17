@@ -168,6 +168,7 @@ public class CamelJBangMain implements Callable<Integer> {
                         .addSubcommand("other", new CommandLine(new CatalogOther(this))))
                 .addSubcommand("cmd", new CommandLine(new CamelAction(this))
                         .addSubcommand("browse", new CommandLine(new CamelBrowseAction(this)))
+                        .addSubcommand("chaos", new CommandLine(new CamelChaosAction(this)))
                         .addSubcommand("disable-processor", new CommandLine(new CamelProcessorDisableAction(this)))
                         .addSubcommand("enable-processor", new CommandLine(new CamelProcessorEnableAction(this)))
                         .addSubcommand("gc", new CommandLine(new CamelGCAction(this)))

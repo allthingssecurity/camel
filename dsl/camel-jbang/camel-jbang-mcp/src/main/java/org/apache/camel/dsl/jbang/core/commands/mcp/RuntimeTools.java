@@ -264,6 +264,57 @@ public class RuntimeTools {
         return delegateToRegistry(toolName, nameOrPid, Map.of("routeId", routeId));
     }
 
+    // ---- Chaos (prototype): needs camel-chaos in the application, dev/test only ----
+
+    @Tool(annotations = @Tool.Annotations(readOnlyHint = false, destructiveHint = true, openWorldHint = false),
+          description = """
+                  Inject faults into a running Camel application to check that it copes (dev/test only; the \
+                  application needs camel-chaos and camel.chaos.enabled=true, and it is refused with profile prod). \
+                  action=add adds a rule: type=fail (calls to endpoints matching pattern throw an exception, \
+                  with a probability and/or for the next N calls), type=latency (adds delay millis), or \
+                  type=stall (suspends the consumer of routeId for duration millis, then resumes it). \
+                  action=report returns, per rule, how many faults were injected and the health before, during \
+                  and after, and per route: exchanges completed, failed, handled by the error handler, \
+                  redeliveries and a verdict (RECOVERED or NOT-RECOVERED). Also remove (by id), clear, reset.""")
+    public JsonObject camel_runtime_chaos(
+            @ToolArg(description = NAME_OR_PID_DESC, required = false) String nameOrPid,
+            @ToolArg(description = "Action: report (default), add, remove, clear, reset", required = false) String action,
+            @ToolArg(description = "Rule type for add: fail (default), latency, stall", required = false) String type,
+            @ToolArg(description = "Endpoint pattern for fail/latency, e.g. http* or kafka:orders",
+                     required = false) String pattern,
+            @ToolArg(description = "Route id for a stall rule", required = false) String routeId,
+            @ToolArg(description = "Probability that a matching call gets the fault: 0..1 or a percentage like 30%",
+                     required = false) String probability,
+            @ToolArg(description = "The rule applies to the next N matching calls, then ends", required = false) String calls,
+            @ToolArg(description = "Latency in millis for a latency rule", required = false) String delay,
+            @ToolArg(description = "Rule lifetime in millis (stall: how long the consumer is stalled)",
+                     required = false) String duration,
+            @ToolArg(description = "Exception class to throw for a fail rule (needs a String constructor), e.g. java.io.IOException",
+                     required = false) String exception,
+            @ToolArg(description = "Rule id (optional for add, required for remove)", required = false) String id) {
+        String act = action == null || action.isBlank() ? "report" : action.toLowerCase();
+        if (!List.of("report", "add", "remove", "clear", "reset").contains(act)) {
+            throw new ToolCallException("Unknown action: " + action + ". Use report, add, remove, clear or reset.", null);
+        }
+        if ("remove".equals(act) && (id == null || id.isBlank())) {
+            throw new ToolCallException("id is required to remove a rule", null);
+        }
+        RuntimeService.ProcessInfo p = runtimeService.findSingleProcess(nameOrPid);
+        Map<String, String> args = new HashMap<>();
+        // "action" is the connector action (chaos); the chaos action travels as "command"
+        args.put("command", act);
+        putIfNotBlank(args, "type", type);
+        putIfNotBlank(args, "pattern", pattern);
+        putIfNotBlank(args, "routeId", routeId);
+        putIfNotBlank(args, "probability", probability);
+        putIfNotBlank(args, "calls", calls);
+        putIfNotBlank(args, "delay", delay);
+        putIfNotBlank(args, "duration", duration);
+        putIfNotBlank(args, "exception", exception);
+        putIfNotBlank(args, "id", id);
+        return runtimeService.executeAction(p.pid(), "chaos", root -> root.putAll(args));
+    }
+
     // ---- Data, resilience, metrics and analysis (CAMEL-24867: the rest of the shared runtime registry) ----
 
     @Tool(annotations = @Tool.Annotations(readOnlyHint = false, destructiveHint = true, openWorldHint = false),

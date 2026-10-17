@@ -1,0 +1,7 @@
+app.cp
+cli.cp
+.mvn/
+cli/.mvn/
+cli/target/
+target/
+*.log

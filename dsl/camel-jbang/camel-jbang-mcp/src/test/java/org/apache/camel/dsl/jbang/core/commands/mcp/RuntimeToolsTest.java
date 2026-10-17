@@ -70,6 +70,24 @@ class RuntimeToolsTest {
     }
 
     @Test
+    void chaosRejectsUnknownAction() {
+        RuntimeTools tools = createTools();
+        assertThatThrownBy(() -> tools.camel_runtime_chaos(null, "explode", null, null, null, null, null, null, null,
+                null, null))
+                .isInstanceOf(ToolCallException.class)
+                .hasMessageContaining("Unknown action");
+    }
+
+    @Test
+    void chaosRemoveRequiresId() {
+        RuntimeTools tools = createTools();
+        assertThatThrownBy(() -> tools.camel_runtime_chaos(null, "remove", null, null, null, null, null, null, null,
+                null, null))
+                .isInstanceOf(ToolCallException.class)
+                .hasMessageContaining("id is required");
+    }
+
+    @Test
     void sqlRequiresQuery() {
         RuntimeTools tools = createTools();
         assertThatThrownBy(() -> tools.camel_runtime_sql(null, null, null, null))
