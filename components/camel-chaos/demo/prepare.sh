@@ -15,11 +15,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Resolves the classpaths of the demo application (app.cp) and of Camel CLI (cli.cp).
-# Run it after installing camel-chaos, camel-cli-connector and camel-jbang-core (see DEMO.md).
+
 cd "$(dirname "$0")"
 MVNW="$(cd ../../.. && pwd)/mvnw"
-mkdir -p .mvn cli/.mvn
-"$MVNW" -B -q -ntp -f pom.xml dependency:build-classpath -Dmdep.outputFile="$PWD/app.cp"
-"$MVNW" -B -q -ntp -f cli/pom.xml dependency:build-classpath -Dmdep.outputFile="$PWD/cli.cp"
-echo "app.cp and cli.cp written"
+mkdir -p target
+"$MVNW" -B -q -ntp -f pom.xml dependency:build-classpath -Dmdep.outputFile="$PWD/target/app.cp"
+"$MVNW" -B -q -ntp -f cli/pom.xml dependency:build-classpath -Dmdep.outputFile="$PWD/target/cli.cp"
+echo "target/app.cp and target/cli.cp written"

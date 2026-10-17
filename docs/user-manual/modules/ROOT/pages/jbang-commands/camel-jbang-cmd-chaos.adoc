@@ -19,8 +19,10 @@ camel cmd chaos [options]
 [cols="2,5,1,2",options="header"]
 |===
 | Option | Description | Default | Type
+| `--at-call` | Stall rule with a pattern: the matching call that suspends the route (default 1) |  | String
 | `--calls` | The rule applies to the next N matching calls |  | String
-| `--command` | report, add, remove, clear or reset | report | String
+| `--command` | report, add, remove, clear, reset or expect | report | String
+| `--count` | Expect: how many more exchanges the route must complete |  | String
 | `--delay` | Latency in millis (latency rule) |  | String
 | `--duration` | Rule lifetime in millis |  | String
 | `--exception` | Exception class to throw (fail rule) |  | String

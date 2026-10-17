@@ -15,5 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 cd "$(dirname "$0")"
-exec "$JAVA_HOME/bin/java" -Dlog4j2.configurationFile=log4j2.properties -cp ".:$(cat app.cp)" org.apache.camel.main.Main -pl file:application.properties
+exec "$JAVA_HOME/bin/java" -Dlog4j2.configurationFile=log4j2.properties -cp ".:$(cat target/app.cp)" org.apache.camel.main.Main -pl file:application.properties

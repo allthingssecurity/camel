@@ -33,6 +33,8 @@ import picocli.CommandLine;
                              "  camel cmd chaos --command=add --type=fail --pattern=http* --probability=30% --calls=20",
                              "  camel cmd chaos --command=add --type=latency --pattern=kafka:* --delay=2000 --duration=60000",
                              "  camel cmd chaos --command=add --type=stall --route-id=orders --duration=5000",
+                             "  camel cmd chaos --command=add --type=stall --pattern=kafka:out --at-call=3 --duration=5000",
+                             "  camel cmd chaos --command=expect --route-id=orders --count=100",
                              "  camel cmd chaos                       (prints the report)",
                              "  camel cmd chaos --command=clear" })
 public class CamelChaosAction extends ActionBaseCommand {
@@ -40,7 +42,7 @@ public class CamelChaosAction extends ActionBaseCommand {
     @CommandLine.Parameters(description = "Name or pid of running Camel integration", arity = "0..1")
     String name = "*";
 
-    @CommandLine.Option(names = { "--command" }, description = "report, add, remove, clear or reset",
+    @CommandLine.Option(names = { "--command" }, description = "report, add, remove, clear, reset or expect",
                         defaultValue = "report")
     String command = "report";
 
@@ -67,6 +69,13 @@ public class CamelChaosAction extends ActionBaseCommand {
 
     @CommandLine.Option(names = { "--exception" }, description = "Exception class to throw (fail rule)")
     String exception;
+
+    @CommandLine.Option(names = { "--at-call" },
+                        description = "Stall rule with a pattern: the matching call that suspends the route (default 1)")
+    String atCall;
+
+    @CommandLine.Option(names = { "--count" }, description = "Expect: how many more exchanges the route must complete")
+    String count;
 
     @CommandLine.Option(names = { "--id" }, description = "Rule id (add: optional, remove: required)")
     String id;
@@ -95,6 +104,8 @@ public class CamelChaosAction extends ActionBaseCommand {
             putIfSet(root, "duration", duration);
             putIfSet(root, "exception", exception);
             putIfSet(root, "id", id);
+            putIfSet(root, "atCall", atCall);
+            putIfSet(root, "count", count);
         });
         if (json) {
             JsonOutput.print(printer(), answer);
@@ -121,10 +132,20 @@ public class CamelChaosAction extends ActionBaseCommand {
                     printer().println(String.format(
                             "  route %-14s completed=%s failed=%s errorHandled=%s redeliveries=%s faults=%s -> %s",
                             e.getKey(), r.get("completed"), r.get("failed"), r.get("failureHandled"), r.get("redeliveries"),
-                            r.get("faultsInjected"), r.get("verdict")));
+                            r.get("faultsInjected"), r.get("verdict") + " [" + r.get("result") + "]"));
                 }
             }
         }
+        if (report.get("expectations") instanceof List<?> exps) {
+            for (Object o : exps) {
+                if (o instanceof Map<?, ?> x) {
+                    printer().println(String.format("  expect %-13s >=%s completed=%s lost=%s [%s]", x.get("routeId"),
+                            x.get("expectedExchanges"), x.get("completedExchanges"), x.get("lostMessages"),
+                            x.get("result")));
+                }
+            }
+        }
+        printer().println("Result: " + report.get("result"));
         return 0;
     }
 

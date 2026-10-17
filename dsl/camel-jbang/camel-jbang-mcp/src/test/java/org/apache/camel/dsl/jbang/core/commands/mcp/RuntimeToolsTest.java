@@ -73,7 +73,7 @@ class RuntimeToolsTest {
     void chaosRejectsUnknownAction() {
         RuntimeTools tools = createTools();
         assertThatThrownBy(() -> tools.camel_runtime_chaos(null, "explode", null, null, null, null, null, null, null,
-                null, null))
+                null, null, null, null))
                 .isInstanceOf(ToolCallException.class)
                 .hasMessageContaining("Unknown action");
     }
@@ -82,7 +82,7 @@ class RuntimeToolsTest {
     void chaosRemoveRequiresId() {
         RuntimeTools tools = createTools();
         assertThatThrownBy(() -> tools.camel_runtime_chaos(null, "remove", null, null, null, null, null, null, null,
-                null, null))
+                null, null, null, null))
                 .isInstanceOf(ToolCallException.class)
                 .hasMessageContaining("id is required");
     }

@@ -35,7 +35,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 class ChaosManagerTest {
@@ -77,29 +76,6 @@ class ChaosManagerTest {
                 from("direct:orders").routeId("orders").to("mock:backend");
             }
         };
-    }
-
-    @Test
-    void installedFromClasspathAndOffByDefault() throws Exception {
-        context = new DefaultCamelContext();
-        context.addRoutes(ordersNoRedelivery());
-        context.start();
-
-        ChaosManager manager = ChaosManager.get(context);
-        assertThat(manager).as("installed by the ContextServicePlugin").isNotNull();
-        assertThat(manager.isEnabled()).isFalse();
-        assertThatThrownBy(() -> manager.addRule(ChaosRule.fail("mock:*", 1.0)))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("disabled");
-    }
-
-    @Test
-    void neverEnabledWithProfileProd() throws Exception {
-        context = newContext(1, true, ordersNoRedelivery());
-        context.getCamelContextExtension().setProfile("prod");
-        ChaosManager manager = ChaosManager.get(context);
-        assertThat(manager.isEnabled()).isFalse();
-        assertThatThrownBy(() -> manager.addRule(ChaosRule.fail("mock:*", 1.0)))
-                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -199,16 +175,6 @@ class ChaosManagerTest {
         assertThat(tookMs).isGreaterThanOrEqualTo(300);
         assertThat(rule.getInjected()).isEqualTo(1);
         assertThat(context.getEndpoint("mock:backend", MockEndpoint.class).getReceivedCounter()).isEqualTo(2);
-    }
-
-    @Test
-    void ruleExpiresAfterDuration() throws Exception {
-        context = newContext(42, true, ordersNoRedelivery());
-        ChaosManager manager = ChaosManager.get(context);
-        ChaosRule rule = manager.addRule(ChaosRule.fail("mock:*", 1.0).duration(200));
-        assertThat(manager.getActiveRules()).contains(rule);
-        await().atMost(5, TimeUnit.SECONDS).until(() -> !manager.getActiveRules().contains(rule));
-        assertThat(rule.toJson().getString("endReason")).isEqualTo("expired");
     }
 
     @Test

@@ -1073,7 +1073,7 @@ public class LocalCliConnector extends ServiceSupport
             String command = root.getString("command");
             params.put("action", command != null ? command : "report");
             for (String key : List.of("type", "pattern", "routeId", "probability", "calls", "delay", "duration",
-                    "exception", "message", "id")) {
+                    "exception", "message", "id", "atCall", "count")) {
                 String value = root.getString(key);
                 if (value != null) {
                     params.put(key, value);

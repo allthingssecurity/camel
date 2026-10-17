@@ -33,7 +33,8 @@ import org.apache.camel.util.json.JsonObject;
             readOnly = false)
 public class ChaosDevConsole extends AbstractDevConsole {
 
-    @Metadata(label = "query", description = "What to do: report (default), add, remove, clear, reset", defaultValue = "report")
+    @Metadata(label = "query", description = "What to do: report (default), add, remove, clear, reset, expect",
+              defaultValue = "report")
     public static final String ACTION = "action";
     @Metadata(label = "query", description = "Rule type for add: fail, latency, stall", defaultValue = "fail")
     public static final String TYPE = "type";
@@ -57,6 +58,12 @@ public class ChaosDevConsole extends AbstractDevConsole {
     public static final String EXCEPTION = "exception";
     @Metadata(label = "query", description = "Exception message (fail rule)")
     public static final String MESSAGE = "message";
+    @Metadata(label = "query", description = "Stall rule with a pattern: the matching call that suspends the route",
+              javaType = "java.lang.Long", defaultValue = "1")
+    public static final String AT_CALL = "atCall";
+    @Metadata(label = "query", description = "Expect: the number of exchanges the route must still complete",
+              javaType = "java.lang.Long")
+    public static final String COUNT = "count";
     @Metadata(label = "query", description = "Rule id (add: optional, remove: required)")
     public static final String ID = "id";
 
@@ -124,6 +131,12 @@ public class ChaosDevConsole extends AbstractDevConsole {
                     manager.reset();
                     answer.put("result", "cleared rules, statistics and timeline");
                 }
+                case "expect" -> {
+                    String routeId = optionString(options, ROUTE_ID);
+                    long count = optionLong(options, COUNT, 0);
+                    manager.expect(routeId, count);
+                    answer.put("result", "expecting " + count + " more exchanges on route " + routeId);
+                }
                 case "report" -> {
                     // report only
                 }
@@ -150,6 +163,7 @@ public class ChaosDevConsole extends AbstractDevConsole {
         rule.setCalls(optionLong(options, CALLS, 0));
         rule.setDelayMs(optionLong(options, DELAY, 0));
         rule.setDurationMs(optionLong(options, DURATION, 0));
+        rule.setAtCall(optionLong(options, AT_CALL, 1));
         rule.exception(optionString(options, EXCEPTION), optionString(options, MESSAGE));
         return rule;
     }

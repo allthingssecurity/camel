@@ -275,10 +275,14 @@ public class RuntimeTools {
                   type=stall (suspends the consumer of routeId for duration millis, then resumes it). \
                   action=report returns, per rule, how many faults were injected and the health before, during \
                   and after, and per route: exchanges completed, failed, handled by the error handler, \
-                  redeliveries and a verdict (RECOVERED or NOT-RECOVERED). Also remove (by id), clear, reset.""")
+                  redeliveries, lost messages and a verdict with PASS or FAIL. A stall rule with a pattern suspends \
+                  the route on the atCall-th matching call, in the middle of routing (as a route policy would). \
+                  action=expect with routeId and count states how many more exchanges the route must complete, \
+                  to catch messages lost without becoming an exchange. Also remove (by id), clear, reset.""")
     public JsonObject camel_runtime_chaos(
             @ToolArg(description = NAME_OR_PID_DESC, required = false) String nameOrPid,
-            @ToolArg(description = "Action: report (default), add, remove, clear, reset", required = false) String action,
+            @ToolArg(description = "Action: report (default), add, remove, clear, reset, expect",
+                     required = false) String action,
             @ToolArg(description = "Rule type for add: fail (default), latency, stall", required = false) String type,
             @ToolArg(description = "Endpoint pattern for fail/latency, e.g. http* or kafka:orders",
                      required = false) String pattern,
@@ -291,10 +295,15 @@ public class RuntimeTools {
                      required = false) String duration,
             @ToolArg(description = "Exception class to throw for a fail rule (needs a String constructor), e.g. java.io.IOException",
                      required = false) String exception,
-            @ToolArg(description = "Rule id (optional for add, required for remove)", required = false) String id) {
+            @ToolArg(description = "Rule id (optional for add, required for remove)", required = false) String id,
+            @ToolArg(description = "Stall rule with a pattern: the matching call that suspends the route (default 1)",
+                     required = false) String atCall,
+            @ToolArg(description = "For expect: how many more exchanges the route must complete",
+                     required = false) String count) {
         String act = action == null || action.isBlank() ? "report" : action.toLowerCase();
-        if (!List.of("report", "add", "remove", "clear", "reset").contains(act)) {
-            throw new ToolCallException("Unknown action: " + action + ". Use report, add, remove, clear or reset.", null);
+        if (!List.of("report", "add", "remove", "clear", "reset", "expect").contains(act)) {
+            throw new ToolCallException(
+                    "Unknown action: " + action + ". Use report, add, remove, clear, reset or expect.", null);
         }
         if ("remove".equals(act) && (id == null || id.isBlank())) {
             throw new ToolCallException("id is required to remove a rule", null);
@@ -312,6 +321,8 @@ public class RuntimeTools {
         putIfNotBlank(args, "duration", duration);
         putIfNotBlank(args, "exception", exception);
         putIfNotBlank(args, "id", id);
+        putIfNotBlank(args, "atCall", atCall);
+        putIfNotBlank(args, "count", count);
         return runtimeService.executeAction(p.pid(), "chaos", root -> root.putAll(args));
     }
 

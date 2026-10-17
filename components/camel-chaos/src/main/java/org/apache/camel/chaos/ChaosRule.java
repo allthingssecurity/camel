@@ -24,6 +24,8 @@ import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.camel.CamelContext;
+import org.apache.camel.support.EndpointHelper;
 import org.apache.camel.util.json.JsonObject;
 
 /**
@@ -52,6 +54,7 @@ public class ChaosRule {
     private long durationMs;
     private String exception;
     private String message;
+    private long atCall = 1;
 
     // runtime state (set by the manager)
     private long seq;
@@ -60,6 +63,8 @@ public class ChaosRule {
     private long expiresAt;
     private volatile String state = "pending";
     private volatile String endReason;
+    // EndpointHelper.matchEndpoint normalizes the URI, which is costly: remember the answer per endpoint URI
+    private final Map<String, Boolean> matchCache = new ConcurrentHashMap<>();
     private final AtomicLong matched = new AtomicLong();
     private final AtomicLong injected = new AtomicLong();
     private final Map<String, AtomicLong> injectedPerRoute = new ConcurrentHashMap<>();
@@ -67,6 +72,9 @@ public class ChaosRule {
     private volatile Map<String, Object> healthBefore;
     private volatile Map<String, Object> healthDuring;
     private volatile Map<String, Object> healthAfter;
+    private volatile long stallStartedAt;
+    private volatile Thread suspender;
+    private boolean stallTriggered;
 
     public static ChaosRule fail(String pattern, double probability) {
         ChaosRule r = new ChaosRule();
@@ -119,6 +127,23 @@ public class ChaosRule {
         return this;
     }
 
+    /**
+     * For a stall rule with an endpoint pattern: the matching call that suspends the route of the exchange, while that
+     * exchange is being routed (for example in the middle of a batch of a polling consumer).
+     */
+    public ChaosRule atCall(long atCall) {
+        this.atCall = atCall;
+        return this;
+    }
+
+    /**
+     * A stall rule triggered by a call to an endpoint matching the pattern (instead of stalling a route right away).
+     */
+    public ChaosRule onCall(String pattern) {
+        this.pattern = pattern;
+        return this;
+    }
+
     public ChaosRule exception(String exceptionClassName, String message) {
         this.exception = exceptionClassName;
         this.message = message;
@@ -133,8 +158,22 @@ public class ChaosRule {
         // two rules do not perturb each other and the same seed gives the same faults
         this.random = new Random(seed * 1_000_003L + seq);
         this.createdAt = now;
-        this.expiresAt = durationMs > 0 ? now + durationMs : 0;
+        this.expiresAt = durationMs > 0 && type != Type.STALL ? now + durationMs : 0;
         this.state = "active";
+    }
+
+    boolean matches(CamelContext context, String endpointUri) {
+        if (pattern == null) {
+            return false;
+        }
+        Boolean m = matchCache.get(endpointUri);
+        if (m == null) {
+            m = EndpointHelper.matchEndpoint(context, endpointUri, pattern);
+            if (matchCache.size() < 10_000) {
+                matchCache.put(endpointUri, m);
+            }
+        }
+        return m;
     }
 
     boolean isActive() {
@@ -142,6 +181,10 @@ public class ChaosRule {
     }
 
     boolean isExpiredAt(long now) {
+        if (type == Type.STALL) {
+            // a stall lasts durationMs from the moment the route was suspended
+            return stallStartedAt > 0 && now >= stallStartedAt + durationMs;
+        }
         if (expiresAt > 0 && now >= expiresAt) {
             return true;
         }
@@ -176,6 +219,39 @@ public class ChaosRule {
         return hit;
     }
 
+    /**
+     * Called for each call matching a stall rule with a pattern. Returns true once, for call number {@link #atCall}.
+     */
+    synchronized boolean triggerStall(String fromRouteId) {
+        if (!isActive() || stallTriggered) {
+            return false;
+        }
+        long n = matched.incrementAndGet();
+        if (n < atCall) {
+            return false;
+        }
+        stallTriggered = true;
+        if (routeId == null) {
+            routeId = fromRouteId;
+        }
+        injected.incrementAndGet();
+        injectedPerRoute.computeIfAbsent(routeId != null ? routeId : "?", k -> new AtomicLong()).incrementAndGet();
+        injectedCallNumbers.add(n);
+        return true;
+    }
+
+    Thread getSuspender() {
+        return suspender;
+    }
+
+    void setSuspender(Thread suspender) {
+        this.suspender = suspender;
+    }
+
+    void stallStarted(long now) {
+        this.stallStartedAt = now;
+    }
+
     synchronized List<Long> getInjectedCallNumbers() {
         return new ArrayList<>(injectedCallNumbers);
     }
@@ -195,6 +271,9 @@ public class ChaosRule {
         }
         if (calls > 0) {
             jo.put("calls", calls);
+        }
+        if (type == Type.STALL && pattern != null) {
+            jo.put("atCall", atCall);
         }
         if (delayMs > 0) {
             jo.put("delayMs", delayMs);
@@ -303,6 +382,14 @@ public class ChaosRule {
 
     public String getMessage() {
         return message;
+    }
+
+    public long getAtCall() {
+        return atCall;
+    }
+
+    public void setAtCall(long atCall) {
+        this.atCall = atCall;
     }
 
     public long getSeq() {

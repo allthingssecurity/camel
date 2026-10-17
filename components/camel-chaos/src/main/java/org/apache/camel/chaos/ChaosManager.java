@@ -17,20 +17,26 @@
 package org.apache.camel.chaos;
 
 import java.lang.reflect.Constructor;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.camel.BatchConsumer;
 import org.apache.camel.CamelContext;
 import org.apache.camel.CamelContextAware;
+import org.apache.camel.Consumer;
 import org.apache.camel.EndpointAware;
 import org.apache.camel.Exchange;
 import org.apache.camel.ExchangeExtension;
@@ -41,10 +47,11 @@ import org.apache.camel.health.HealthCheck;
 import org.apache.camel.health.HealthCheckHelper;
 import org.apache.camel.spi.CamelEvent;
 import org.apache.camel.spi.InterceptStrategy;
-import org.apache.camel.support.EndpointHelper;
+import org.apache.camel.support.EventHelper;
 import org.apache.camel.support.EventNotifierSupport;
 import org.apache.camel.support.service.ServiceSupport;
 import org.apache.camel.util.json.JsonObject;
+import org.apache.camel.util.json.Jsoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,12 +81,15 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     private CamelContext camelContext;
     private long seed = 42;
     private Boolean enabledOverride;
+    // decided when the context starts: a context that starts without chaos enabled never gets it
+    private volatile boolean armed = true;
     private final AtomicLong ruleSeq = new AtomicLong();
     // all rules ever added (for the report); active ones are also in activeRules
     private final List<ChaosRule> rules = new CopyOnWriteArrayList<>();
     private volatile List<ChaosRule> activeRules = List.of();
     private final Map<String, RouteStats> routeStats = new ConcurrentHashMap<>();
     private final List<Map<String, Object>> timeline = new CopyOnWriteArrayList<>();
+    private final List<Expectation> expectations = new CopyOnWriteArrayList<>();
     private ScheduledExecutorService scheduler;
     private final ChaosEventNotifier notifier = new ChaosEventNotifier();
 
@@ -112,6 +122,23 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         return manager;
     }
 
+    /**
+     * Removes what {@link #install(CamelContext)} added, as if camel-chaos were not on the classpath. Must be called
+     * before the routes are added. Used as the baseline of the overhead measurement.
+     */
+    static void uninstall(CamelContext context) {
+        ChaosManager manager = get(context);
+        if (manager != null) {
+            context.getCamelContextExtension().getInterceptStrategies().remove(manager);
+            context.getManagementStrategy().removeEventNotifier(manager.notifier);
+            try {
+                context.removeService(manager);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+    }
+
     @Override
     public CamelContext getCamelContext() {
         return camelContext;
@@ -138,6 +165,9 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     }
 
     public boolean isEnabled() {
+        if (!armed) {
+            return false;
+        }
         String profile = camelContext.getCamelContextExtension().getProfile();
         if ("prod".equalsIgnoreCase(profile)) {
             return false;
@@ -166,6 +196,14 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
 
     @Override
     protected void doStart() throws Exception {
+        if (!isEnabled()) {
+            // off: take the hooks out again, so a running application without chaos pays nothing for the jar, and
+            // nobody (CLI, MCP, dev console) can switch chaos on at runtime
+            disarm();
+            camelContext.getCamelContextExtension().getInterceptStrategies().remove(this);
+            return;
+        }
+        LOG.info("camel-chaos is enabled (dev/test only): faults can be injected through the chaos dev console");
         String s = resolve(SEED);
         if (s != null) {
             seed = Long.parseLong(s.trim());
@@ -185,13 +223,20 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     // ---- rules ----
 
     public synchronized ChaosRule addRule(ChaosRule rule) {
+        if (!armed) {
+            throw new IllegalStateException(
+                    "Chaos is disabled: it was not enabled when the application started. Set " + ENABLED
+                                            + "=true before starting (dev/test only; never allowed with profile prod)");
+        }
         if (!isEnabled()) {
             throw new IllegalStateException(
                     "Chaos is disabled. Set " + ENABLED + "=true (dev/test only; never allowed with profile prod)");
         }
         if (rule.getType() == ChaosRule.Type.STALL) {
-            if (rule.getRouteId() == null || camelContext.getRoute(rule.getRouteId()) == null) {
-                throw new IllegalArgumentException("Stall rule needs an existing routeId: " + rule.getRouteId());
+            boolean onCall = rule.getPattern() != null && !rule.getPattern().isBlank();
+            if (!onCall && (rule.getRouteId() == null || camelContext.getRoute(rule.getRouteId()) == null)) {
+                throw new IllegalArgumentException(
+                        "Stall rule needs an existing routeId, or an endpoint pattern: " + rule.getRouteId());
             }
             if (rule.getDurationMs() <= 0) {
                 throw new IllegalArgumentException("Stall rule needs a durationMs > 0");
@@ -220,7 +265,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         event("rule-added", rule.getId(), null);
         LOG.info("Chaos rule added: {}", rule.toJson().toJson());
 
-        if (rule.getType() == ChaosRule.Type.STALL) {
+        if (rule.getType() == ChaosRule.Type.STALL && (rule.getPattern() == null || rule.getPattern().isBlank())) {
             stallRoute(rule);
         }
         return rule;
@@ -248,6 +293,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     public synchronized void reset() {
         clear();
         rules.clear();
+        expectations.clear();
         routeStats.clear();
         timeline.clear();
     }
@@ -272,6 +318,13 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     synchronized void expireRules() {
         long now = System.currentTimeMillis();
         for (ChaosRule r : activeRules) {
+            Thread suspender = r.getSuspender();
+            if (r.getType() == ChaosRule.Type.STALL && (suspender != null && suspender.isAlive()
+                    || r.getRouteId() != null && camelContext.getRouteController()
+                            .getRouteStatus(r.getRouteId()) == ServiceStatus.Suspending)) {
+                // the route is still finishing its in-flight exchanges: resume it once it is suspended
+                continue;
+            }
             if (r.isExpiredAt(now)) {
                 endRule(r, r.getCalls() > 0 && r.getMatched() >= r.getCalls() ? "calls-reached" : "expired");
             }
@@ -301,6 +354,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         String routeId = rule.getRouteId();
         try {
             camelContext.getRouteController().suspendRoute(routeId);
+            rule.stallStarted(System.currentTimeMillis());
             ServiceStatus st = camelContext.getRouteController().getRouteStatus(routeId);
             rule.roll(routeId);
             stats(routeId).faults.incrementAndGet();
@@ -310,6 +364,52 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         } catch (Exception e) {
             endRule(rule, "stall-failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Suspends the route of the exchange that is being routed, as a route policy or an operator would, from another
+     * thread (a route cannot suspend itself while routing), and returns once the suspend has reached the consumer: a
+     * batch consumer then stops routing the rest of its batch.
+     */
+    private void stallRouteMidFlight(ChaosRule rule, String routeId) {
+        if (routeId == null) {
+            endRule(rule, "stall-failed: the exchange has no route");
+            return;
+        }
+        stats(routeId).faults.incrementAndGet();
+        stats(routeId).markFault();
+        Thread suspender = new Thread(() -> {
+            try {
+                camelContext.getRouteController().suspendRoute(routeId);
+                // the stall lasts durationMs from the moment the route is suspended
+                rule.stallStarted(System.currentTimeMillis());
+                event("route-suspended", rule.getId(), routeId);
+            } catch (Exception e) {
+                event("route-suspend-failed", rule.getId(), routeId + ": " + e.getMessage());
+            }
+        }, "ChaosSuspendRoute-" + routeId);
+        suspender.setDaemon(true);
+        rule.setSuspender(suspender);
+        suspender.start();
+        Consumer consumer = camelContext.getRoute(routeId).getConsumer();
+        // a batch consumer: wait until the suspend has reached it, so it stops in the middle of its batch. Any other
+        // consumer: do not wait, the suspend waits for this very exchange to complete
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (consumer instanceof BatchConsumer bc && System.currentTimeMillis() < deadline) {
+            if (!bc.isBatchAllowed()) {
+                break;
+            }
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        rule.stallStarted(System.currentTimeMillis());
+        event("route-stalled", rule.getId(), routeId + " during an exchange ("
+                                             + camelContext.getRouteController().getRouteStatus(routeId) + ")");
+        rule.setHealthDuring(healthSnapshot());
     }
 
     private void resumeRoute(ChaosRule rule) {
@@ -343,10 +443,17 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         }
         long now = System.currentTimeMillis();
         for (ChaosRule r : list) {
-            if (r.getType() == ChaosRule.Type.STALL || !r.isActive() || r.isExpiredAt(now)) {
+            if (!r.isActive() || r.getPattern() == null) {
                 continue;
             }
-            if (!EndpointHelper.matchEndpoint(camelContext, endpointUri, r.getPattern())) {
+            if (r.getType() == ChaosRule.Type.STALL) {
+                if (r.matches(camelContext, endpointUri)
+                        && r.triggerStall(exchange.getFromRouteId())) {
+                    stallRouteMidFlight(r, exchange.getFromRouteId());
+                }
+                continue;
+            }
+            if (r.isExpiredAt(now) || !r.matches(camelContext, endpointUri)) {
                 continue;
             }
             String routeId = exchange.getFromRouteId();
@@ -396,10 +503,25 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     @Override
     public Processor wrapProcessorInInterceptors(
             CamelContext context, NamedNode definition, Processor target, Processor nextTarget) {
-        if (target instanceof EndpointAware) {
+        if (armed && !isEnabled()) {
+            // the routes are built before the services start: decide here, on the first processor
+            disarm();
+        }
+        if (armed && target instanceof EndpointAware) {
             return new ChaosProcessor(this, target);
         }
         return target;
+    }
+
+    private synchronized void disarm() {
+        if (armed) {
+            armed = false;
+            camelContext.getManagementStrategy().removeEventNotifier(notifier);
+            // adding the notifier switched the exchange events on for the whole context: switch them back off when
+            // nothing else needs them
+            camelContext.getCamelContextExtension().setEventNotificationApplicable(EventHelper.eventsApplicable(camelContext));
+            LOG.debug("camel-chaos is on the classpath but not enabled ({}=true): hooks removed", ENABLED);
+        }
     }
 
     // ---- health ----
@@ -451,14 +573,117 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         }
         root.put("rules", rl);
 
-        Map<String, Object> routes = new LinkedHashMap<>();
+        Map<String, Object> routes = new TreeMap<>();
+        boolean fail = false;
+        boolean running = !activeRules.isEmpty();
         for (Map.Entry<String, RouteStats> e : routeStats.entrySet()) {
-            routes.put(e.getKey(), e.getValue().toJson(e.getKey()));
+            JsonObject jo = e.getValue().toJson(e.getKey());
+            routes.put(e.getKey(), jo);
+            fail |= "FAIL".equals(jo.get("result"));
         }
         root.put("routes", routes);
+        List<Object> el = new ArrayList<>();
+        for (Expectation x : expectations) {
+            JsonObject jo = x.toJson();
+            el.add(jo);
+            fail |= "FAIL".equals(jo.get("result"));
+        }
+        root.put("expectations", el);
+        root.put("result", fail ? "FAIL" : running ? "RUNNING" : "PASS");
         root.put("healthNow", healthSnapshot());
         root.put("timeline", new ArrayList<>(timeline));
         return root;
+    }
+
+    /**
+     * The report without anything that depends on the wall clock (times, the current health), with sorted keys. The
+     * same seed and the same traffic give the same text, so its SHA-256 can be compared between runs.
+     */
+    public String canonicalReport() {
+        JsonObject r = report();
+        r.remove("healthNow");
+        return Jsoner.serialize(canonical(r));
+    }
+
+    public String canonicalReportSha256() {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(md.digest(canonicalReport().getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static Object canonical(Object o) {
+        if (o instanceof Map<?, ?> m) {
+            Map<String, Object> answer = new TreeMap<>();
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (!"time".equals(e.getKey())) {
+                    answer.put(String.valueOf(e.getKey()), canonical(e.getValue()));
+                }
+            }
+            return answer;
+        }
+        if (o instanceof Collection<?> c) {
+            List<Object> answer = new ArrayList<>();
+            for (Object v : c) {
+                answer.add(canonical(v));
+            }
+            return answer;
+        }
+        return o;
+    }
+
+    // ---- expectations ----
+
+    /**
+     * States that, from now on, at least {@code count} exchanges of the route must complete. This catches messages that
+     * are lost without ever becoming an exchange (for example a polling consumer that skips the rest of a batch), which
+     * the exchange counters alone cannot see.
+     */
+    public synchronized Expectation expect(String routeId, long count) {
+        if (routeId == null || camelContext.getRoute(routeId) == null) {
+            throw new IllegalArgumentException("Expectation needs an existing routeId: " + routeId);
+        }
+        Expectation x = new Expectation(routeId, count, stats(routeId).completed.get());
+        expectations.add(x);
+        event("expectation-added", null, routeId + " >= " + count + " exchanges");
+        return x;
+    }
+
+    public List<Expectation> getExpectations() {
+        return List.copyOf(expectations);
+    }
+
+    public final class Expectation {
+        private final String routeId;
+        private final long count;
+        private final long baseline;
+
+        Expectation(String routeId, long count, long baseline) {
+            this.routeId = routeId;
+            this.count = count;
+            this.baseline = baseline;
+        }
+
+        public long observed() {
+            return stats(routeId).completed.get() - baseline;
+        }
+
+        public boolean isMet() {
+            return observed() >= count;
+        }
+
+        JsonObject toJson() {
+            JsonObject jo = new JsonObject();
+            jo.put("routeId", routeId);
+            jo.put("expectedExchanges", count);
+            long obs = observed();
+            jo.put("completedExchanges", obs);
+            jo.put("lostMessages", Math.max(0, count - obs));
+            jo.put("result", obs >= count ? "PASS" : activeRules.isEmpty() ? "FAIL" : "RUNNING");
+            return jo;
+        }
     }
 
     /**
@@ -481,11 +706,21 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         for (Map.Entry<String, RouteStats> e : routeStats.entrySet()) {
             JsonObject jo = e.getValue().toJson(e.getKey());
             sb.append(String.format(
-                    "  %-12s completed=%s failed=%s handledByErrorHandler=%s redeliveries=%s faults=%s completedAfterLastFault=%s verdict=%s%n",
+                    "  %-12s completed=%s failed=%s handledByErrorHandler=%s redeliveries=%s faults=%s completedAfterLastFault=%s lost=%s verdict=%s result=%s%n",
                     e.getKey(), jo.get("completed"), jo.get("failed"), jo.get("failureHandled"),
                     jo.get("redeliveries"), jo.get("faultsInjected"), jo.get("completedAfterLastFault"),
-                    jo.get("verdict")));
+                    jo.get("lostMessages"), jo.get("verdict"), jo.get("result")));
         }
+        if (!expectations.isEmpty()) {
+            sb.append(String.format("%nExpectations:%n"));
+            for (Expectation x : expectations) {
+                JsonObject jo = x.toJson();
+                sb.append(String.format("  %-12s expected>=%s completed=%s lost=%s result=%s%n", jo.get("routeId"),
+                        jo.get("expectedExchanges"), jo.get("completedExchanges"), jo.get("lostMessages"),
+                        jo.get("result")));
+            }
+        }
+        sb.append(String.format("%nResult: %s%n", report().get("result")));
         return sb.toString();
     }
 
@@ -514,6 +749,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     final class RouteStats {
         final AtomicLong completed = new AtomicLong();
         final AtomicLong failed = new AtomicLong();
+        final AtomicLong failedToCaller = new AtomicLong();
         final AtomicLong failureHandled = new AtomicLong();
         final AtomicLong redeliveries = new AtomicLong();
         final AtomicLong faults = new AtomicLong();
@@ -529,13 +765,26 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             JsonObject jo = new JsonObject();
             jo.put("completed", completed.get());
             jo.put("failed", failed.get());
+            jo.put("failedReturnedToCaller", failedToCaller.get());
             jo.put("failureHandled", failureHandled.get());
             jo.put("redeliveries", redeliveries.get());
             jo.put("faultsInjected", faults.get());
             jo.put("completedAfterLastFault", completedAfterLastFault.get());
             ServiceStatus st = camelContext.getRouteController().getRouteStatus(routeId);
             jo.put("routeStatus", st != null ? st.name() : "unknown");
-            jo.put("verdict", verdict(routeId, st));
+            String verdict = verdict(routeId, st);
+            jo.put("verdict", verdict);
+            // an exchange that failed without being handled by an error handler is a message the route lost
+            jo.put("lostMessages", failed.get());
+            String result;
+            if ("chaos-active".equals(verdict)) {
+                result = "RUNNING";
+            } else if (failed.get() > 0 || verdict.startsWith("NOT-RECOVERED")) {
+                result = "FAIL";
+            } else {
+                result = "PASS";
+            }
+            jo.put("result", result);
             return jo;
         }
 
@@ -556,6 +805,9 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             }
             if (failed.get() > 0) {
                 return "RECOVERED, but " + failed.get() + " exchange(s) failed unhandled (possible message loss)";
+            }
+            if (failedToCaller.get() > 0) {
+                return "RECOVERED (" + failedToCaller.get() + " request/reply failure(s) returned to the caller)";
             }
             return "RECOVERED";
         }
@@ -588,7 +840,12 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             } else if (event instanceof CamelEvent.ExchangeFailureHandledEvent) {
                 s.failureHandled.incrementAndGet();
             } else if (event instanceof CamelEvent.ExchangeFailedEvent) {
-                s.failed.incrementAndGet();
+                if (ee.getExchange().getPattern().isOutCapable()) {
+                    // request/reply: the caller gets the exception and decides (retry, error response)
+                    s.failedToCaller.incrementAndGet();
+                } else {
+                    s.failed.incrementAndGet();
+                }
             } else if (event instanceof CamelEvent.ExchangeCompletedEvent) {
                 ExchangeExtension ext = ee.getExchange().getExchangeExtension();
                 if (ext.isErrorHandlerHandledSet() && ext.isErrorHandlerHandled()) {

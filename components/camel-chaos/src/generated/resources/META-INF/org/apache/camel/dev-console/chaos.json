@@ -26,10 +26,25 @@
       "autowired": false,
       "secret": false,
       "defaultValue": "report",
-      "description": "What to do: report (default), add, remove, clear, reset"
+      "description": "What to do: report (default), add, remove, clear, reset, expect"
+    },
+    "atCall": {
+      "index": 1,
+      "kind": "option",
+      "displayName": "At Call",
+      "group": "query",
+      "label": "query",
+      "required": false,
+      "type": "integer",
+      "javaType": "java.lang.Long",
+      "deprecated": false,
+      "autowired": false,
+      "secret": false,
+      "defaultValue": 1,
+      "description": "Stall rule with a pattern: the matching call that suspends the route"
     },
     "calls": {
-      "index": 1,
+      "index": 2,
       "kind": "option",
       "displayName": "Calls",
       "group": "query",
@@ -42,8 +57,22 @@
       "secret": false,
       "description": "The rule applies to the next N matching calls, then ends (0 = no limit)"
     },
+    "count": {
+      "index": 3,
+      "kind": "option",
+      "displayName": "Count",
+      "group": "query",
+      "label": "query",
+      "required": false,
+      "type": "integer",
+      "javaType": "java.lang.Long",
+      "deprecated": false,
+      "autowired": false,
+      "secret": false,
+      "description": "Expect: the number of exchanges the route must still complete"
+    },
     "delay": {
-      "index": 2,
+      "index": 4,
       "kind": "option",
       "displayName": "Delay",
       "group": "query",
@@ -57,7 +86,7 @@
       "description": "Latency to add in millis (latency rule)"
     },
     "duration": {
-      "index": 3,
+      "index": 5,
       "kind": "option",
       "displayName": "Duration",
       "group": "query",
@@ -71,7 +100,7 @@
       "description": "Rule lifetime in millis (0 = until removed or calls reached)"
     },
     "exception": {
-      "index": 4,
+      "index": 6,
       "kind": "option",
       "displayName": "Exception",
       "group": "query",
@@ -85,7 +114,7 @@
       "description": "Exception class to throw (fail rule); needs a String constructor"
     },
     "id": {
-      "index": 5,
+      "index": 7,
       "kind": "option",
       "displayName": "Id",
       "group": "query",
@@ -99,7 +128,7 @@
       "description": "Rule id (add: optional, remove: required)"
     },
     "message": {
-      "index": 6,
+      "index": 8,
       "kind": "option",
       "displayName": "Message",
       "group": "query",
@@ -113,7 +142,7 @@
       "description": "Exception message (fail rule)"
     },
     "pattern": {
-      "index": 7,
+      "index": 9,
       "kind": "option",
       "displayName": "Pattern",
       "group": "query",
@@ -127,7 +156,7 @@
       "description": "Endpoint pattern for fail and latency rules (wildcard or regex, as in intercept)"
     },
     "probability": {
-      "index": 8,
+      "index": 10,
       "kind": "option",
       "displayName": "Probability",
       "group": "query",
@@ -142,7 +171,7 @@
       "description": "Probability (0..1) that a matching call gets the fault"
     },
     "routeId": {
-      "index": 9,
+      "index": 11,
       "kind": "option",
       "displayName": "Route Id",
       "group": "query",
@@ -156,7 +185,7 @@
       "description": "Route id for a stall rule"
     },
     "type": {
-      "index": 10,
+      "index": 12,
       "kind": "option",
       "displayName": "Type",
       "group": "query",
