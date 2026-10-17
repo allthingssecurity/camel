@@ -1,7 +1,11 @@
 # A chaos injector for Camel developers: break the calls, stall the consumers, read the report
 
-Working material for a proposal (a design document in `design/` plus a thread on dev@ and the Zulip topic where Claus
-asked for it). Write it again in your own words. Facts marked *(checked)* were verified on apache/camel main
+[![Animated explainer: how camel-chaos works (silent preview, click for the narrated video)](docs/chaos-explainer.gif)](https://github.com/allthingssecurity/camel/raw/camel-chaos-prototype/components/camel-chaos/docs/chaos-explainer.mp4)
+
+*Silent preview above. [Watch the narrated 4-minute explainer (MP4)](https://github.com/allthingssecurity/camel/raw/camel-chaos-prototype/components/camel-chaos/docs/chaos-explainer.mp4).*
+
+A proposal for a chaos injector that Camel application developers can drive from the CLI, the TUI or an AI through
+MCP, following the Zulip discussion. Facts marked *(checked)* were verified on apache/camel main
 (9fb9bc911f78, 2026-10-17) or in the logs cited; everything else is design. The prototype is a branch on our fork
 (section 10); nothing of it is in Camel.
 
