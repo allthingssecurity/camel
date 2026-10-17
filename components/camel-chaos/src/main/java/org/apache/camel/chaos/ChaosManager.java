@@ -288,10 +288,12 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     }
 
     /**
-     * Clears all rules, statistics and the timeline.
+     * Clears all rules, statistics, expectations and the timeline, and restarts the rule order (so the next rule draws
+     * from the same random stream as the first rule of a fresh application with the same seed).
      */
     public synchronized void reset() {
         clear();
+        ruleSeq.set(0);
         rules.clear();
         expectations.clear();
         routeStats.clear();

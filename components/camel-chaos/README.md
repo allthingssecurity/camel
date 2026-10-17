@@ -1,114 +1,97 @@
 # camel-chaos: a fault injector for Camel developers (prototype)
 
-**Status: prototype for discussion, not a pull request.** It lives on the branch `camel-chaos-prototype` of
-github.com/allthingssecurity/camel, on top of apache/camel `main`. It is meant for dev and test only: it is off by
-default, it refuses to run with the `prod` profile, and nothing changes unless you add the jar to your application.
+**Status: prototype for discussion, not a pull request.** Branch `camel-chaos-prototype` of
+github.com/allthingssecurity/camel, on top of apache/camel `main`. Dev and test only: off unless enabled at startup,
+refused with the `prod` profile, and nothing changes unless you add the jar.
 
 ## The problem
 
-Most Camel applications have an error handler, redeliveries, a dead letter channel, health checks and maybe a circuit
-breaker. Whether they actually work is usually found out in production, the first time the backend is slow or a
-broker goes away. A developer who wants to check it today has to stop a container by hand, or write a test that
-mocks the failure, and then look at logs to guess what happened.
+An application has an error handler, redeliveries, a dead letter channel, health checks. Whether they work is
+usually found out in production. Recent Camel fixes show how quiet the failures are: the slack consumer skipped the
+rest of a poll when the route was suspended in the middle of it (CAMEL-25684); the mongodb tailable consumer's thread
+ended while the server was down and the route kept saying `Started` (CAMEL-25679). Nothing was logged in either case.
 
-Claus asked on Zulip for a chaos injector that a developer can drive from Camel CLI, from the TUI, or from an AI
-assistant through an MCP tool, to see whether the application is robust.
+Claus asked on Zulip for a chaos injector that a developer can drive from the CLI, the TUI, or an AI assistant through
+MCP, to check that an application is robust.
 
 ## The idea
 
-1. **Inject faults at seams Camel already has.** No change to Camel core and no change to the routes:
-   - calls to endpoints (`to(...)`) are wrapped through the existing `InterceptStrategy` SPI, so a rule can make a
-     call fail or slow down;
-   - a consumer can be stalled through the `RouteController` (suspend the route, resume it later).
-2. **Small rules, added and removed at runtime.** "30% of the calls to `http*` fail, for the next 20 calls",
-   "add 2 s to `kafka:*` for one minute", "stall the consumer of route `orders` for 5 s". Rules end by themselves
-   after a number of calls or a duration.
-3. **A seed decides which calls fail.** Each rule draws from its own random source made from the seed and the rule
-   order, so the same seed and the same traffic fail the same calls. In the demo, two separate JVM runs with seed 7
-   failed exactly calls 6, 11, 14 and 18 of the first rule.
-4. **The report is the point.** For each rule: how many calls matched, how many faults were injected, and the health
-   check state before, during and after. For each route: exchanges completed, failed unhandled (possible message
-   loss), handled by the error handler (dead letter channel, `onException`), redeliveries, and a verdict:
-   `RECOVERED`, `RECOVERED, but N exchange(s) failed unhandled`, or `NOT-RECOVERED` (route not started, or nothing
-   completed after the last fault).
+1. **Faults at seams Camel already has**, no core change: calls to endpoints (`to`) are wrapped through
+   `InterceptStrategy` and can fail or slow down; a route's consumer can be stalled through the `RouteController`,
+   right away or on the Nth call, in the middle of a batch.
+2. **Small rules at runtime**: "30 % of calls to `http*` fail for the next 20 calls", "add 2 s to `kafka:*` for a
+   minute", "suspend route `orders` on the 3rd call for 5 s". Rules end by themselves.
+3. **A seed decides which calls fail**: same seed, same traffic, same faults, same report (SHA-256).
+4. **The report is the point**: per rule, faults injected and health before/during/after; per route, completed,
+   failed (lost), returned to the caller, handled by the error handler, redelivered, and PASS/FAIL. Expectations
+   (`expect orders 30`) catch messages lost without becoming an exchange and consumers that died while `Started`.
 
 ```
-$ camel cmd chaos chaos-demo --command=add --type=fail --pattern=log:backend* --probability=30% --calls=20
-$ camel cmd chaos chaos-demo --command=add --type=stall --route-id=orders --duration=3000
-$ camel cmd chaos chaos-demo
-Chaos enabled=true seed=7
+$ camel cmd chaos my-app --command=add --type=fail --pattern='http*' --probability=30% --calls=20
+$ camel cmd chaos my-app --command=add --type=stall --route-id=orders --duration=3000
+$ camel cmd chaos my-app --command=expect --route-id=orders --count=30
+$ camel cmd chaos my-app
   rule backend-30pct  fail    log:backend*         ended  matched=20 injected=4 health UP/UP/UP
   rule stall-orders   stall   orders               ended  matched=1 injected=1 health UP/DOWN/UP
   rule backend-down   fail    log:backend*         ended  matched=3 injected=3 health UP/UP/UP
-  route orders         completed=68 failed=0 errorHandled=1 redeliveries=6 faults=8 -> RECOVERED
+  route orders         completed=116 failed=0 errorHandled=1 redeliveries=6 faults=8 -> RECOVERED [PASS]
+  expect orders        >=30 completed=68 lost=0 [PASS]
+Result: PASS
 ```
 
-(Real output of the demo in [`DEMO.md`](DEMO.md): 30% failures were all recovered by redelivery, the stall took the
-`route:orders` and `consumer:orders` health checks DOWN and back UP, and three failures in a row sent one exchange to
-the dead letter channel.)
+## Proof points
+
+Each is a test or a script with a log (the logs are in `camel-lean/logs-chaos/` of the author's workspace; the
+commands to produce them are in [`DEMO.md`](DEMO.md)).
+
+| # | Claim | Test | Result |
+|---|---|---|---|
+| a1 | finds a real bug in real code | [`SlackConsumerChaosTest`](../camel-slack/src/test/java/org/apache/camel/component/slack/SlackConsumerChaosTest.java), run on main and on `SlackConsumer` from before CAMEL-25684 | before the fix: 5/5 runs FAIL, 2 of 4 messages lost; main: 5/5 PASS |
+| a2 | flags a consumer dead while `Started` | [`ChaosConsumerDeadWhileStartedTest`](src/test/java/org/apache/camel/chaos/ChaosConsumerDeadWhileStartedTest.java), a **minimal reproduction** of the CAMEL-25679 mechanism, not the mongodb component | old shape: health UP, route Started, expectation 0/20 FAIL; fixed shape: PASS |
+| b | reproducible | [`ChaosReproducibilityTest`](src/test/java/org/apache/camel/chaos/ChaosReproducibilityTest.java) | seed 11: 3/3 identical report SHA-256; seed 12: other schedule, other SHA-256 |
+| c | no measurable cost when off | [`ChaosOverheadTest`](src/test/java/org/apache/camel/chaos/ChaosOverheadTest.java) (`-Dchaos.bench=true`), timing loop with rotated order and an A/A control | off: +0.4 % and +2.8 % over two runs (A/A +0.0 % and +0.2 %) on a 640-670 ns no-op route; enabled with no rule: +6 to +9 % |
+| d | safe | [`ChaosSafetyTest`](src/test/java/org/apache/camel/chaos/ChaosSafetyTest.java) | off by default, hooks removed at startup, cannot be switched on at runtime, refused with prod, rules expire, removing a rule restores normal behaviour |
+| e | verdicts are right | [`ChaosVerdictTest`](src/test/java/org/apache/camel/chaos/ChaosVerdictTest.java) | same 30 % faults: with redelivery PASS (200/200), with a dead letter channel PASS, without error handling FAIL with exactly 56 lost |
+| f | control works end to end | [`LocalCliConnectorChaosActionTest`](../../dsl/camel-cli-connector/src/test/java/org/apache/camel/cli/connector/LocalCliConnectorChaosActionTest.java), [`ChaosDemoTest`](src/test/java/org/apache/camel/chaos/ChaosDemoTest.java), `demo/` (live app driven by `camel cmd chaos` and by the MCP tool method, [`McpChaosE2E`](demo/McpChaosE2E.java)) | the fault applies in the application and the report comes back through each surface |
+
+Also: [`ChaosManagerTest`](src/test/java/org/apache/camel/chaos/ChaosManagerTest.java) (rules, latency, stall) and
+[`ChaosMidFlightStallTest`](src/test/java/org/apache/camel/chaos/ChaosMidFlightStallTest.java) (a file consumer
+suspended in the middle of a batch of 6 still delivers all 6).
 
 ## How it hooks in
 
 | Class | Role |
 |---|---|
-| `ChaosContextServicePlugin` | found through the `ContextServicePlugin` service loader; installs the manager when the jar is on the classpath |
-| `ChaosManager` | the rules, the seed, the `InterceptStrategy`, an `EventNotifier` for the statistics, health sampling, the report |
-| `ChaosProcessor` | wraps each processor that sends to an endpoint (`EndpointAware`); with no active rule it reads one volatile list |
-| `ChaosRule` | one rule: `fail`, `latency` or `stall`, probability, number of calls, duration, exception class |
-| `ChaosDevConsole` | the `chaos` dev console: `action=add/remove/clear/reset/report`, JSON and text |
+| `ChaosContextServicePlugin` | `ContextServicePlugin`: installs the manager when the jar is on the classpath |
+| `ChaosManager` | rules, seed, `InterceptStrategy`, event notifier, health sampling, expectations, report; removes its hooks at startup when not enabled |
+| `ChaosProcessor` | wraps each `EndpointAware` processor; with no active rule it reads one volatile list |
+| `ChaosRule` | `fail`, `latency`, `stall` (route, or on the Nth call); probability, calls, duration, exception |
+| `ChaosDevConsole` | the `chaos` console: `action=add/remove/clear/reset/expect/report` |
 
-The control surfaces all end in the dev console:
-
-| Surface | How | Wired in this prototype |
+| Surface | Wired | Tested |
 |---|---|---|
-| dev console | `chaos` console, `/q/dev/chaos?action=...` over HTTP | yes, tested |
-| CLI connector | new action `chaos` in `LocalCliConnector`, passes the options to the console | yes, tested end to end with the real console |
-| Camel CLI | `camel cmd chaos [name] --command=add ...` (`CamelChaosAction`) | yes, run against a live application (DEMO.md) |
-| MCP | tool `camel_runtime_chaos` in `RuntimeTools` of camel-jbang-mcp, same action as the CLI | yes, compiled and its argument checks unit tested; not run from an MCP client |
-| TUI | nothing yet | no |
+| dev console `chaos` (`/q/dev/chaos`) | yes | `ChaosDemoTest`, `ChaosSafetyTest` |
+| CLI connector action `chaos` | yes | `LocalCliConnectorChaosActionTest` with the real console |
+| `camel cmd chaos` (`CamelChaosAction`) | yes | live application, `demo/` |
+| MCP `camel_runtime_chaos` | yes | argument checks in `RuntimeToolsTest`; tool method called against the live application (not through an MCP client) |
+| TUI | no | |
 
-Enabling: add `camel-chaos` to the application and set `camel.chaos.enabled=true` (property, system property or
-`CAMEL_CHAOS_ENABLED`). Without it every `add` is refused. With `camel.main.profile=prod` it is refused even when the
-property is set. `camel.chaos.seed` sets the seed (default 42).
-
-## Tests
-
-All in-JVM, no external service:
-
-- `ChaosManagerTest` (8 tests): installed from the classpath and off by default; never on with profile `prod`; 30%
-  failures on 100 exchanges are redelivered or dead-lettered and the counters add up (completed + handled = sent);
-  "next 3 calls fail" with a chosen exception; same seed gives the same failing calls and another seed does not;
-  latency; expiry after a duration; a stalled timer consumer is resumed and the verdict is `RECOVERED`.
-- `ChaosDemoTest`: the demo driven only through the dev console: health `UP`, `DOWN` during the stall, `UP` after.
-- `LocalCliConnectorChaosActionTest` (camel-cli-connector): an action file with `action=chaos` reaches the real
-  console, injects two failures into a route and the report comes back through the connector.
-- `RuntimeToolsTest` (camel-jbang-mcp): argument checks of `camel_runtime_chaos`.
+Enable with `camel.chaos.enabled=true` (property, system property or `CAMEL_CHAOS_ENABLED`) **before the application
+starts**; `camel.chaos.seed` sets the seed (default 42).
 
 ## Limits
 
-- Only processors that know their endpoint (`to`, `EndpointAware`) are wrapped. `toD`, `enrich`, `pollEnrich`,
-  `wireTap` with dynamic URIs and calls made inside a bean or a component's own client are not.
-- Latency is a `Thread.sleep` in the calling thread, so it also slows an async route down in the wrong place.
-- A stall suspends the route; a consumer that does not support suspension is stopped and started again instead. It
-  is not a "broker went away" fault: the consumer's own reconnect code is not exercised.
-- No thread-pool faults yet (rejections, slow pools through `ThreadPoolFactory`), no faults inside a consumer's poll.
-- The rules are wired when the routes are built: routes added before the manager is installed are not wrapped. With
-  the jar on the classpath this does not happen, since the plugin runs while the context is built.
-- The verdict is a heuristic over counters. It does not know whether a message was lost downstream, only whether an
-  exchange failed without being handled.
-- Not yet in the catalog, the BOM or the website docs; the generated `jbang-commands` and MCP docs pages are updated.
+- Only `to` (`EndpointAware`) sends are wrapped: not `toD`, `enrich`, dynamic `wireTap`, nor calls made inside a bean
+  or a component's client. Faults inside a component (a repository store, a driver reconnect) are out of reach.
+- Latency is a `Thread.sleep` in the calling thread. A stall suspends the route; it does not take the broker away.
+- No thread-pool faults yet.
+- The verdict is a heuristic over counters: fire-and-forget exchanges that fail unhandled count as lost,
+  request/reply failures as returned to the caller. Loss downstream of a successful call is not seen; expectations
+  help, given a count.
+- Not in the catalog, BOM or website docs yet (the generated CLI and MCP doc pages are updated).
 
 ## Next steps
 
-1. Thread faults through `ThreadPoolFactory` / `ExecutorServiceManager`: reject or delay tasks of a named pool.
-2. Consumer-side faults: fail or slow down a poll, drop a connection (per component, starting with JMS, Kafka, file).
-3. `toD` and other dynamic sends (wrap `SendDynamicProcessor` by its resolved URI).
-4. A TUI panel next to the existing ones, and a short "chaos session" that runs a scenario and writes the report.
-5. Assertions for tests: `ChaosManager.report()` is already usable from JUnit; a small `@ChaosTest` helper could make
-   "this route survives 30% backend failures" a one-line test.
-
-## Feedback welcome
-
-Questions this prototype is meant to answer: is a dev-only `camel-chaos` module (or a part of camel-cli-connector) the
-right home; are endpoint calls and consumer stalls the right first faults; and is the report what a developer wants to
-see? Comments are welcome on the Camel Zulip.
+`camel run --chaos` and rules from a file; docs; dynamic sends, thread-pool and poll faults; a TUI tab; optional
+adapters (Toxiproxy, Testcontainers pause, Chaos Mesh). The full proposal, with the debate and the effort, is kept
+with the author's community notes (`chaos-proposal.md`).

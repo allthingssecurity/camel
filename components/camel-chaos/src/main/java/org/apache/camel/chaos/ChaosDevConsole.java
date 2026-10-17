@@ -129,7 +129,7 @@ public class ChaosDevConsole extends AbstractDevConsole {
                 }
                 case "reset" -> {
                     manager.reset();
-                    answer.put("result", "cleared rules, statistics and timeline");
+                    answer.put("result", "cleared rules, statistics, expectations and timeline; rule order restarted");
                 }
                 case "expect" -> {
                     String routeId = optionString(options, ROUTE_ID);
