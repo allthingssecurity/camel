@@ -2,7 +2,7 @@
 
 [![Animated explainer: how camel-chaos works (silent preview, click for the narrated video)](docs/chaos-explainer.gif)](https://github.com/allthingssecurity/camel/raw/camel-chaos-prototype/components/camel-chaos/docs/chaos-explainer.mp4)
 
-*Silent preview above. [Watch the narrated 4-minute explainer (MP4)](https://github.com/allthingssecurity/camel/raw/camel-chaos-prototype/components/camel-chaos/docs/chaos-explainer.mp4).*
+*Silent preview above. [Download the narrated 4-minute explainer (MP4, 9 MB)](https://github.com/allthingssecurity/camel/raw/camel-chaos-prototype/components/camel-chaos/docs/chaos-explainer.mp4).*
 
 A proposal for a chaos injector that Camel application developers can drive from the CLI, the TUI or an AI through
 MCP, following the Zulip discussion. Facts marked *(checked)* were verified on apache/camel main
