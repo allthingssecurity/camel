@@ -18,7 +18,7 @@ package org.apache.camel.component.qdrant.rag;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 import io.qdrant.client.PointIdFactory;
 import io.qdrant.client.ValueFactory;
@@ -33,7 +33,6 @@ public class RAGUpsert implements Processor {
 
     private String payloadKey = "content";
     private String textVariable = "text";
-    private final AtomicLong pointIdCounter = new AtomicLong(1);
 
     @SuppressWarnings("unchecked")
     @Override
@@ -42,7 +41,10 @@ public class RAGUpsert implements Processor {
         String text = exchange.getVariable(textVariable, String.class);
 
         Points.PointStruct point = Points.PointStruct.newBuilder()
-                .setId(PointIdFactory.id(pointIdCounter.getAndIncrement()))
+                // a random id, as in the embeddings data type transformer. The upsert replaces a point with the
+                // same id, so ids counted from 1 by each instance replaced the points of an earlier run (a restart)
+                // or of another instance writing to the same collection
+                .setId(PointIdFactory.id(UUID.randomUUID()))
                 .setVectors(VectorsFactory.vectors(embedding))
                 .putAllPayload(Map.of(payloadKey, ValueFactory.value(text)))
                 .build();

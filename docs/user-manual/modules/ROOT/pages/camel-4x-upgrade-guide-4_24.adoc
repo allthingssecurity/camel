@@ -1205,6 +1205,13 @@ older entry was updated after newer ones were published.
 Routes using `sortEntries=true` with `idempotent=false` get the entries in this order too: the entry that was updated
 first is routed first, where the entry that was published last was routed first before.
 
+=== camel-qdrant - RAGUpsert gives each point a random id
+
+The `org.apache.camel.component.qdrant.rag.RAGUpsert` helper numbered its points from 1 in every instance, so after a
+restart (or with a second instance writing to the same collection) its upserts replaced the points stored before. It now
+gives each point a random UUID, as the `qdrant:embeddings` data type transformer does. Points stored before keep their
+numeric ids.
+
 === camel-opensearch - the credentials are only sent to the nodes of the cluster
 
 The `user` and `password` are now offered only to the nodes the client talks to: the hosts of `hostAddresses` and,
