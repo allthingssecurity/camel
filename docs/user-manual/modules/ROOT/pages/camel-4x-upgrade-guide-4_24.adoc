@@ -1901,3 +1901,10 @@ previous run is looked up. `camel dirty` does not count these files.
 * `camel_get_log` of an integration that is not running answers with the log of its previous run (see
   `camel log --previous`), and its message says how that run ended. `previous=true` asks for that log also when the
   integration runs again. `camel_get_errors` of an integration that is not running says how its previous run ended.
+
+=== camel-kafka - KafkaKeyValueRepository keeps all its entries by default
+
+The local replica of `KafkaKeyValueRepository` held at most 1000 entries by default (`maxCacheSize`), and dropped the
+oldest written entries beyond that, so `get` and `contains` reported them as absent although they were still in the
+topic (an aggregation group or a state store value was lost). It now keeps all entries by default (`maxCacheSize=0`), as
+documented. Set `maxCacheSize` to bound the replica as before.

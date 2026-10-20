@@ -24,6 +24,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -59,7 +60,7 @@ import org.slf4j.LoggerFactory;
  * The topic used must be unique per logical repository. TTL is managed locally via expiration timestamps in the cache;
  * expired entries are lazily evicted on access.
  * <p/>
- * <b>Note on TTL and topic growth:</b> TTL expiration is managed locally in the LRU cache. The Kafka topic retains all
+ * <b>Note on TTL and topic growth:</b> TTL expiration is managed locally in the cache. The Kafka topic retains all
  * entries (including expired ones) indefinitely. On restart, expired entries are replayed from the topic and
  * re-populated in the cache with their original expiration timestamps (they will appear as expired immediately). To
  * prevent unbounded topic growth, configure the topic with Kafka's built-in log compaction
@@ -80,7 +81,6 @@ public class KafkaKeyValueRepository extends ServiceSupport implements KeyValueR
 
     private static final Logger LOG = LoggerFactory.getLogger(KafkaKeyValueRepository.class);
 
-    private static final int DEFAULT_MAXIMUM_CACHE_SIZE = 1000;
     private static final int DEFAULT_POLL_DURATION_MS = 100;
 
     // Action bytes for the changelog protocol
@@ -108,9 +108,12 @@ public class KafkaKeyValueRepository extends ServiceSupport implements KeyValueR
     private String bootstrapServers;
     @Metadata(description = "A string that uniquely identifies the group of consumer processes to which this consumer belongs.")
     private String groupId;
-    @Metadata(description = "Sets the maximum size of the local key cache.",
-              defaultValue = "" + DEFAULT_MAXIMUM_CACHE_SIZE)
-    private int maxCacheSize = DEFAULT_MAXIMUM_CACHE_SIZE;
+    @Metadata(description = "Sets the maximum number of entries kept in the local replica of the topic. The default (0)"
+                            + " keeps all entries. When set, the oldest written entries beyond this number are dropped from"
+                            + " the local replica: get and contains report them as absent although they are still in the"
+                            + " topic.",
+              defaultValue = "0")
+    private int maxCacheSize;
     @Metadata(description = "Sets the poll duration of the Kafka consumer in milliseconds.",
               defaultValue = "" + DEFAULT_POLL_DURATION_MS)
     private int pollDurationMs = DEFAULT_POLL_DURATION_MS;
@@ -399,12 +402,11 @@ public class KafkaKeyValueRepository extends ServiceSupport implements KeyValueR
         ObjectHelper.notNull(camelContext, "camelContext");
         StringHelper.notEmpty(topic, "topic");
 
-        // The local cache is an LRU map: when the number of live keys exceeds maxCacheSize,
-        // the least-recently-used entries are silently evicted from memory. get() and contains()
-        // will report evicted keys as absent even though the value is still in the Kafka topic.
-        // This matches the trade-off used by KafkaIdempotentRepository. Increase maxCacheSize
-        // if you need a larger working set to be visible locally.
-        this.cache = LRUCacheFactory.newLRUCache(maxCacheSize);
+        // The local replica holds every entry of the topic, as this is a key-value store (and the
+        // store of the aggregator and the state store). Only when maxCacheSize is set, it is an LRU
+        // map that drops the oldest written entries beyond that size: get() and contains() then
+        // report them as absent even though the value is still in the Kafka topic.
+        this.cache = maxCacheSize > 0 ? LRUCacheFactory.newLRUCache(maxCacheSize) : new ConcurrentHashMap<>();
 
         consumerConfig = KafkaChangelog.consumerConfig(consumerConfig, bootstrapServers, groupId);
         producerConfig = KafkaChangelog.producerConfig(producerConfig, bootstrapServers);
@@ -520,11 +522,13 @@ public class KafkaKeyValueRepository extends ServiceSupport implements KeyValueR
     }
 
     /**
-     * Sets the maximum size of the local key cache.
+     * Sets the maximum number of entries kept in the local replica of the topic. The default (0) keeps all entries.
+     * When set, the oldest written entries beyond this number are dropped from the local replica: get and contains
+     * report them as absent although they are still in the topic.
      */
     public void setMaxCacheSize(int maxCacheSize) {
-        if (maxCacheSize <= 0) {
-            throw new IllegalArgumentException("maxCacheSize must be greater than 0, was: " + maxCacheSize);
+        if (maxCacheSize < 0) {
+            throw new IllegalArgumentException("maxCacheSize must be 0 (unlimited) or greater, was: " + maxCacheSize);
         }
         this.maxCacheSize = maxCacheSize;
     }

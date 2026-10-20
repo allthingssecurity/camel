@@ -753,7 +753,10 @@ Required properties:
 
 Optional properties:
 
-* `maxCacheSize` — maximum number of entries to hold in the local in-memory replica (default: unlimited).
+* `maxCacheSize` — maximum number of entries to hold in the local in-memory replica (default: `0`, unlimited).
+  When set, the oldest written entries beyond this number are dropped from the replica: `get` and `contains`
+  report them as absent although they are still in the topic, so do not set it when the repository is the store
+  of the Aggregator or the State Store.
 * `pollDurationMs` — poll timeout in milliseconds when rebuilding state at startup (default: `100`).
 * `startupOnly` — if `true`, the consumer only reads the topic once at startup and does not keep polling (default: `false`).
 * `groupId` — Kafka consumer group ID (default: auto-generated).
