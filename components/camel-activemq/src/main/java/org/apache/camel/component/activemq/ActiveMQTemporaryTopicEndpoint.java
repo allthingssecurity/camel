@@ -30,4 +30,13 @@ public class ActiveMQTemporaryTopicEndpoint extends JmsTemporaryTopicEndpoint {
     public ActiveMQTemporaryTopicEndpoint(String endpointUri, String destination) {
         super(endpointUri, destination);
     }
+
+    @Override
+    protected void doShutdown() throws Exception {
+        super.doShutdown();
+        // close the connection factory this endpoint created (its configuration is a copy of the component's)
+        if (getConfiguration() instanceof ActiveMQConfiguration amq) {
+            amq.closeCreatedConnectionFactory();
+        }
+    }
 }

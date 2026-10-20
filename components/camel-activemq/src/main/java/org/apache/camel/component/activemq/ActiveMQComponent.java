@@ -208,6 +208,25 @@ public class ActiveMQComponent extends JmsComponent {
         singleConnectionFactoryList.add(singleConnectionFactory);
     }
 
+    protected void removeConnectionFactory(Object connectionFactory) {
+        pooledConnectionFactoryServiceList.remove(connectionFactory);
+        singleConnectionFactoryList.remove(connectionFactory);
+    }
+
+    static void closeConnectionFactory(Object connectionFactory) {
+        try {
+            if (connectionFactory instanceof SingleConnectionFactory scf) {
+                scf.destroy();
+            } else {
+                // invoke stop method if exists (pooled connection factory)
+                Method m = connectionFactory.getClass().getMethod("stop");
+                org.apache.camel.support.ObjectHelper.invokeMethod(m, connectionFactory);
+            }
+        } catch (Exception e) {
+            LOG.debug("Error closing connection factory {}", connectionFactory, e);
+        }
+    }
+
     @Override
     protected String convertPathToActualDestination(String path, Map<String, Object> parameters) {
         // support ActiveMQ destination options using the destination. prefix

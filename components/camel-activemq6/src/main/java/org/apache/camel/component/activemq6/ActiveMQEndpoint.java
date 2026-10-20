@@ -118,4 +118,13 @@ public class ActiveMQEndpoint extends JmsEndpoint implements EndpointServiceLoca
     public void setDestinationOptions(Map<String, String> destinationOptions) {
         this.destinationOptions = destinationOptions;
     }
+
+    @Override
+    protected void doShutdown() throws Exception {
+        super.doShutdown();
+        // close the connection factory this endpoint created (its configuration is a copy of the component's)
+        if (getConfiguration() instanceof ActiveMQConfiguration amq) {
+            amq.closeCreatedConnectionFactory();
+        }
+    }
 }

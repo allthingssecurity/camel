@@ -39,6 +39,8 @@ public class ActiveMQConfiguration extends JmsConfiguration {
     private boolean useSingleConnection;
     private boolean usePooledConnection = true;
     private boolean trustAllPackages;
+    // the pooled or single connection factory this configuration created itself (not copied)
+    private volatile ConnectionFactory createdConnectionFactory;
 
     public ActiveMQConfiguration() {
     }
@@ -184,15 +186,42 @@ public class ActiveMQConfiguration extends JmsConfiguration {
             if (activeMQComponent != null) {
                 activeMQComponent.addSingleConnectionFactory(scf);
             }
+            createdConnectionFactory = scf;
             return scf;
         } else if (isUsePooledConnection()) {
             ConnectionFactory pcf = createPooledConnectionFactory(context, answer);
             if (activeMQComponent != null) {
                 activeMQComponent.addPooledConnectionFactoryService(pcf);
             }
+            createdConnectionFactory = pcf;
             return pcf;
         } else {
             return answer;
+        }
+    }
+
+    @Override
+    public JmsConfiguration copy() {
+        ActiveMQConfiguration answer = (ActiveMQConfiguration) super.copy();
+        // a connection factory created by this configuration is closed by its owner, not by the copy
+        answer.createdConnectionFactory = null;
+        return answer;
+    }
+
+    /**
+     * Closes the pooled or single connection factory this configuration created, if any. Each endpoint copies the
+     * configuration of the component, so without a connection factory on the component every endpoint creates its own,
+     * which holds a connection to the broker; the endpoint closes it when it is shut down (for example an endpoint of
+     * toD or recipientList with cacheSize=-1, which is shut down after each use).
+     */
+    void closeCreatedConnectionFactory() {
+        ConnectionFactory cf = createdConnectionFactory;
+        createdConnectionFactory = null;
+        if (cf != null) {
+            if (activeMQComponent != null) {
+                activeMQComponent.removeConnectionFactory(cf);
+            }
+            ActiveMQComponent.closeConnectionFactory(cf);
         }
     }
 
