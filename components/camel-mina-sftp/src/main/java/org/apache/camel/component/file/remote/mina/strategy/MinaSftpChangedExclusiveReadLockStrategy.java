@@ -23,6 +23,7 @@ import org.apache.camel.component.file.GenericFileEndpoint;
 import org.apache.camel.component.file.GenericFileExclusiveReadLockStrategy;
 import org.apache.camel.component.file.GenericFileOperations;
 import org.apache.camel.component.file.remote.SftpRemoteFile;
+import org.apache.camel.component.file.remote.mina.MinaSftpOperations;
 import org.apache.camel.spi.CamelLogger;
 import org.apache.camel.util.StopWatch;
 import org.slf4j.Logger;
@@ -87,7 +88,9 @@ public class MinaSftpChangedExclusiveReadLockStrategy implements GenericFileExcl
                     files = operations.listFiles();
                 } else {
                     LOG.trace("Using fast exists to update file information for {}", path);
-                    files = operations.listFiles(path);
+                    // the path is the file itself, which listFiles cannot read as a directory
+                    files = operations instanceof MinaSftpOperations minaSftpOperations
+                            ? minaSftpOperations.listFile(path) : operations.listFiles(path);
                 }
             } else {
                 String path = file.getParent();

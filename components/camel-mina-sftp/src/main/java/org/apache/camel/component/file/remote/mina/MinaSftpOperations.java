@@ -77,6 +77,8 @@ import org.apache.sshd.sftp.client.SftpClient;
 import org.apache.sshd.sftp.client.SftpClient.DirEntry;
 import org.apache.sshd.sftp.client.SftpClient.OpenMode;
 import org.apache.sshd.sftp.client.SftpClientFactory;
+import org.apache.sshd.sftp.common.SftpConstants;
+import org.apache.sshd.sftp.common.SftpException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1175,6 +1177,37 @@ public class MinaSftpOperations implements RemoteFileOperations<SftpRemoteFile> 
             return result.toArray(new MinaSftpRemoteFile[0]);
         } catch (IOException e) {
             throw new GenericFileOperationFailedException("Cannot list directory: " + path, e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Lists the file of the given path, as the ls of JSch (used by the sftp component) does for a file:
+     * {@link #listFiles(String)} reads a directory, and an SFTP server refuses to open a file as a directory.
+     *
+     * @param  path the path of the file
+     * @return      the file, or an empty array if it does not exist
+     */
+    public SftpRemoteFile[] listFile(String path) throws GenericFileOperationFailedException {
+        lock.lock();
+        try {
+            LOG.trace("Listing remote file {}", path);
+            reconnectIfNecessary(null);
+
+            SftpClient.Attributes attributes;
+            try {
+                attributes = sftpClient.stat(path);
+            } catch (SftpException e) {
+                if (e.getStatus() == SftpConstants.SSH_FX_NO_SUCH_FILE) {
+                    return new MinaSftpRemoteFile[0];
+                }
+                throw e;
+            }
+            String name = FileUtil.stripPath(path);
+            return new MinaSftpRemoteFile[] { new MinaSftpRemoteFile(new DirEntry(name, name, attributes)) };
+        } catch (IOException e) {
+            throw new GenericFileOperationFailedException("Cannot list file: " + path, e);
         } finally {
             lock.unlock();
         }
