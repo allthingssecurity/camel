@@ -1657,6 +1657,16 @@ In both cases the objects are no longer kept in the `inProgressRepository`; befo
 the same key) was skipped by all later polls until the endpoint was restarted. With the `fileName` option, a failed
 get still fails the poll.
 
+=== camel-ibm-cos - the producer uploads a changed body although the content-length header is stale
+
+When the length of the body is known without reading it (a file, `byte[]`, `String`, `Path` or cached stream), the
+producer now uploads it with that length, and the `CamelIBMCOSContentLength` header is only used for a stream whose
+length is not known (such as the content of an object got with the `getObject` operation). Previously the header took
+precedence after a route changed the body of an object read by the ibm-cos consumer or by `getObject` (which set the
+header). A single part upload then failed with an `SdkClientException`, as the SDK checks that the body has the
+declared length. With `multiPartUpload=true` and a header above `partSize`, a body longer than the header was stored
+cut to the header length, with no error. A route no longer needs to remove the header before the producer.
+
 === camel-aws2-s3 - the producer stores the whole body when the content-length header is stale
 
 When the length of the body is known without reading it (a `byte[]`, `String`, file, `Path` or cached stream), the

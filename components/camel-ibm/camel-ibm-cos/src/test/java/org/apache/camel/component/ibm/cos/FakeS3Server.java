@@ -16,7 +16,9 @@
  */
 package org.apache.camel.component.ibm.cos;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
@@ -35,8 +37,9 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * A minimal in-process fake of the S3 API calls the consumer makes for a single bucket (path-style requests): head
- * bucket, list objects (v2, paginated with max-keys and start-after/continuation-token), head, get and delete object.
+ * A minimal in-process fake of the S3 API calls the consumer and the producer make for a single bucket (path-style
+ * requests): head bucket, list objects (v2, paginated with max-keys and start-after/continuation-token), head, get, put
+ * (single part and multipart upload) and delete object.
  */
 final class FakeS3Server {
 
@@ -44,6 +47,8 @@ final class FakeS3Server {
     private final HttpServer server;
     private final NavigableMap<String, byte[]> objects = new ConcurrentSkipListMap<>();
     private final Map<String, AtomicInteger> gets = new ConcurrentHashMap<>();
+    private final Map<String, NavigableMap<Integer, byte[]>> uploads = new ConcurrentHashMap<>();
+    private final AtomicInteger uploadIds = new AtomicInteger();
 
     FakeS3Server(String bucket) throws IOException {
         this.bucket = bucket;
@@ -65,6 +70,13 @@ final class FakeS3Server {
 
     void put(String key, String content) {
         objects.put(key, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * The content of the object as it was stored, or null.
+     */
+    byte[] content(String key) {
+        return objects.get(key);
     }
 
     int gets(String key) {
@@ -108,6 +120,27 @@ final class FakeS3Server {
                     }
                 }
             }
+            case "PUT" -> {
+                byte[] content;
+                try (InputStream is = http.getRequestBody()) {
+                    content = is.readAllBytes();
+                }
+                if (http.getRequestHeaders().containsKey("x-amz-decoded-content-length")) {
+                    content = decodeAwsChunked(content);
+                }
+                Map<String, String> query = query(http);
+                if (query.containsKey("uploadId")) {
+                    // a part of a multipart upload
+                    uploads.get(query.get("uploadId")).put(Integer.parseInt(query.get("partNumber")), content);
+                } else {
+                    objects.put(key, content);
+                }
+                // the client compares the ETag with the MD5 of the bytes it sent
+                http.getResponseHeaders().add("ETag", "\"" + md5(content) + "\"");
+                http.sendResponseHeaders(200, -1);
+                http.close();
+            }
+            case "POST" -> multipart(http, key, query(http));
             case "DELETE" -> {
                 objects.remove(key);
                 http.sendResponseHeaders(204, -1);
@@ -115,6 +148,61 @@ final class FakeS3Server {
             }
             default -> respond(http, 405, null, null);
         }
+    }
+
+    /**
+     * Initiates a multipart upload ({@code ?uploads}) or completes it ({@code ?uploadId=}): the object is the parts in
+     * the order of their numbers.
+     */
+    private void multipart(HttpExchange http, String key, Map<String, String> query) throws IOException {
+        try (InputStream is = http.getRequestBody()) {
+            is.readAllBytes();
+        }
+        if (query.containsKey("uploads")) {
+            String uploadId = "upload-" + uploadIds.incrementAndGet();
+            uploads.put(uploadId, new ConcurrentSkipListMap<>());
+            respond(http, 200, "application/xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                                                  + "<InitiateMultipartUploadResult><Bucket>" + bucket + "</Bucket>"
+                                                  + "<Key>" + key + "</Key><UploadId>" + uploadId + "</UploadId>"
+                                                  + "</InitiateMultipartUploadResult>");
+        } else if (query.containsKey("uploadId")) {
+            NavigableMap<Integer, byte[]> parts = uploads.remove(query.get("uploadId"));
+            ByteArrayOutputStream content = new ByteArrayOutputStream();
+            for (byte[] part : parts.values()) {
+                content.write(part);
+            }
+            objects.put(key, content.toByteArray());
+            // the ETag of a multipart object is not the MD5 of its content, the client does not check it
+            respond(http, 200, "application/xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                                                  + "<CompleteMultipartUploadResult><Bucket>" + bucket + "</Bucket>"
+                                                  + "<Key>" + key + "</Key><ETag>\"" + md5(content.toByteArray())
+                                                  + "-" + parts.size() + "\"</ETag></CompleteMultipartUploadResult>");
+        } else {
+            respond(http, 405, null, null);
+        }
+    }
+
+    /**
+     * The payload of a body sent with aws-chunked encoding: chunks of
+     * {@code <hex size>;chunk-signature=...\r\n<data>\r\n}, ending with a chunk of size 0.
+     */
+    private static byte[] decodeAwsChunked(byte[] body) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int pos = 0;
+        while (pos < body.length) {
+            int lineEnd = pos;
+            while (body[lineEnd] != '\r') {
+                lineEnd++;
+            }
+            String header = new String(body, pos, lineEnd - pos, StandardCharsets.US_ASCII);
+            int size = Integer.parseInt(header.substring(0, header.indexOf(';')), 16);
+            if (size == 0) {
+                break;
+            }
+            out.write(body, lineEnd + 2, size);
+            pos = lineEnd + 2 + size + 2;
+        }
+        return out.toByteArray();
     }
 
     private void list(HttpExchange http, Map<String, String> query) throws IOException {

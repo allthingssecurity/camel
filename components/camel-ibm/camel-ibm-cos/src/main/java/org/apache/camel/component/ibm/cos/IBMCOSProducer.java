@@ -138,27 +138,30 @@ public class IBMCOSProducer extends DefaultProducer {
 
         InputStream inputStream = exchange.getIn().getMandatoryBody(InputStream.class);
 
-        // Calculate content length if not provided to avoid SDK warnings
-        Long contentLength = exchange.getIn().getHeader(IBMCOSConstants.CONTENT_LENGTH, Long.class);
-        if (contentLength != null) {
-            metadata.setContentLength(contentLength);
-        } else if (wrappedFileLength > 0) {
-            // Use file length from WrappedFile (avoids reading stream into memory)
-            metadata.setContentLength(wrappedFileLength);
-        } else {
+        // the length of the body when it is known without reading it: the content-length header is only used for a
+        // stream of unknown length, as it can be stale once the route changed the body (for example the length of an
+        // object read by the consumer): the SDK fails a single part upload of a body of another length, and a multipart
+        // upload only sends the declared length, so a longer body would be stored cut
+        long length = wrappedFileLength;
+        if (length <= 0) {
             // such as a java.nio.file.Path, byte[] or stream cache
-            long length = PayloadHelper.getLength(body);
-            if (length < 0) {
-                length = PayloadHelper.getLength(inputStream);
-            }
-            if (length < 0) {
-                // copy the data to calculate the length, which uses stream caching
+            length = PayloadHelper.getLength(body);
+        }
+        if (length < 0) {
+            length = PayloadHelper.getLength(inputStream);
+        }
+        if (length < 0) {
+            Long contentLength = exchange.getIn().getHeader(IBMCOSConstants.CONTENT_LENGTH, Long.class);
+            if (contentLength != null) {
+                length = contentLength;
+            } else {
+                // copy the data to calculate the length (to avoid SDK warnings), which uses stream caching
                 // so big payloads are spooled to disk when spooling is enabled
                 inputStream = PayloadHelper.cacheStream(exchange, inputStream);
                 length = PayloadHelper.getLength(inputStream);
             }
-            metadata.setContentLength(length);
         }
+        metadata.setContentLength(length);
 
         PutObjectRequest putObjectRequest = new PutObjectRequest(bucketName, key, inputStream, metadata);
 
