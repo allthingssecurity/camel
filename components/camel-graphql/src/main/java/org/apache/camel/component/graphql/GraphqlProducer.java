@@ -93,10 +93,19 @@ public class GraphqlProducer extends DefaultAsyncProducer {
         Exchange httpExchange = getEndpoint().createExchange();
         // not read by camel-http (skipControlHeaders=true): the httpMethod option of the internal endpoint decides
         httpExchange.getIn().setHeader(HttpConstants.HTTP_METHOD, "post");
-        httpExchange.getIn().setHeader("Content-Type", "application/json");
         httpExchange.getIn().setHeader("Accept", "application/json");
         httpExchange.getIn().setHeader("Accept-Encoding", "gzip");
         MessageHelper.copyHeaders(exchange.getMessage(), httpExchange.getIn(), true);
+        // the query and the variables are sent in the JSON body, so the headers they are read from are not sent as
+        // HTTP headers as well
+        if (getEndpoint().getQueryHeader() != null) {
+            httpExchange.getIn().removeHeader(getEndpoint().getQueryHeader());
+        }
+        if (getEndpoint().getVariablesHeader() != null) {
+            httpExchange.getIn().removeHeader(getEndpoint().getVariablesHeader());
+        }
+        // the body is JSON, whatever Content-Type the message has (such as the one of a request received over HTTP)
+        httpExchange.getIn().setHeader(Exchange.CONTENT_TYPE, "application/json");
 
         try {
             String requestBody
