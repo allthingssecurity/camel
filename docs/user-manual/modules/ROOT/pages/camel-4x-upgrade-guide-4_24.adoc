@@ -2636,3 +2636,11 @@ Node producer creates it, from the options of the Edge Node endpoint (`deviceIds
 Device route that starts before the Edge Node route, or while it is stopped, therefore no longer fails with a
 `NullPointerException` when the Device URI has no `deviceIds`. Sending to a Device endpoint while no producer of its
 Edge Node endpoint is started now fails the exchange with an `IllegalStateException`; before, the data was dropped.
+
+=== camel-coap - a route serves only the resource of its own path, and only while it is started
+
+A request for a parent path of a route that no route serves (`/orders` when only `/orders/{id}` has a route) is now
+answered with `4.04 Not Found`. Before, it was routed to the route of the longer path, which got the request without
+its path parameters. A stopped, suspended or removed route no longer serves its resource: its requests are answered
+with `4.04 Not Found`, or with `4.05 Method Not Allowed` when another route still serves the path for other methods.
+Before, they were answered with `5.00 Internal Server Error` and the removed route stayed referenced by the resource.

@@ -46,6 +46,14 @@ final class CamelCoapResource extends CoapResource {
         possibles = null;
     }
 
+    /**
+     * A resource of a parent path that no consumer serves (yet).
+     */
+    CamelCoapResource(String name) {
+        super(name);
+        possibles = null;
+    }
+
     private CamelCoapResource(String name, List<CamelCoapResource> possibles) {
         super(name);
         this.possibles = possibles;
@@ -57,6 +65,11 @@ final class CamelCoapResource extends CoapResource {
         for (String method : coapMethodRestrict.split(",")) {
             consumers.put(method.trim(), consumer);
         }
+    }
+
+    void removeConsumer(CoAPConsumer consumer) {
+        // only the methods this consumer serves: another consumer may have taken over a method of the same path
+        consumers.values().removeIf(c -> c == consumer);
     }
 
     @Override
@@ -90,13 +103,13 @@ final class CamelCoapResource extends CoapResource {
             consumers.putAll(possibles.get(0).consumers);
         }
         CoapExchange cexchange = new CoapExchange(exchange, this);
+        consumer = consumers.get(exchange.getRequest().getCode().name());
+        if (consumer == null) {
+            // no route serves this resource (a parent path of a route, or its routes are stopped), or not this method
+            cexchange.respond(consumers.isEmpty() ? ResponseCode.NOT_FOUND : ResponseCode.METHOD_NOT_ALLOWED);
+            return;
+        }
         try {
-            consumer = consumers.get(exchange.getRequest().getCode().name());
-            if (consumer == null) {
-                cexchange.respond(ResponseCode.METHOD_NOT_ALLOWED);
-                return;
-            }
-
             camelExchange = consumer.createExchange(false);
             consumer.createUoW(camelExchange);
 

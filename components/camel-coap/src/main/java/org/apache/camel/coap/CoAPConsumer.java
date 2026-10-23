@@ -27,6 +27,7 @@ import org.eclipse.californium.core.server.resources.Resource;
  */
 public class CoAPConsumer extends DefaultConsumer {
     private final CoAPEndpoint endpoint;
+    private volatile CamelCoapResource resource;
 
     public CoAPConsumer(final CoAPEndpoint endpoint, final Processor processor) {
         super(endpoint, processor);
@@ -45,17 +46,33 @@ public class CoAPConsumer extends DefaultConsumer {
         Resource cr = endpoint.getCoapServer().getRoot();
         while (pathSegmentIterator.hasNext()) {
             String pathSegment = pathSegmentIterator.next();
+            boolean last = !pathSegmentIterator.hasNext();
             Resource child = cr.getChild(pathSegment);
             if (child == null) {
-                child = new CamelCoapResource(pathSegment, this);
+                // only the resource of the path itself is served by this consumer, the resources of the parent paths
+                // are only there to hold it (a request for them is answered with 4.04 unless a route serves them)
+                child = last ? new CamelCoapResource(pathSegment, this) : new CamelCoapResource(pathSegment);
                 ((CamelCoapResource) child).setObservable(endpoint.isObservable());
                 cr.add(child);
-                cr = child;
-            } else if (!pathSegmentIterator.hasNext()) {
+            } else if (last) {
                 ((CamelCoapResource) child).addConsumer(this);
-            } else {
-                cr = child;
             }
+            if (last) {
+                resource = (CamelCoapResource) child;
+            }
+            cr = child;
         }
+    }
+
+    @Override
+    protected void doStop() throws Exception {
+        // a stopped (or removed) route no longer serves its resource: the request is answered with 4.04, or with 4.05
+        // when another route still serves the resource for other methods
+        CamelCoapResource current = resource;
+        if (current != null) {
+            current.removeConsumer(this);
+            resource = null;
+        }
+        super.doStop();
     }
 }
