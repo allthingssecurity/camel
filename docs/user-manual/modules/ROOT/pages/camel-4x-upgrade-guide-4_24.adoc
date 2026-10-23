@@ -2636,3 +2636,20 @@ Node producer creates it, from the options of the Edge Node endpoint (`deviceIds
 Device route that starts before the Edge Node route, or while it is stopped, therefore no longer fails with a
 `NullPointerException` when the Device URI has no `deviceIds`. Sending to a Device endpoint while no producer of its
 Edge Node endpoint is started now fails the exchange with an `IllegalStateException`; before, the data was dropped.
+
+=== camel-file - ${file:name} in moveExisting is the name of the file
+
+With `fileExist=Move`, the `${file:name}` token of `moveExisting` is now the name of the existing file in its
+directory, as the producer of `ftp`, `ftps` and `sftp` uses it with the default `stepwise=true`. It was the path of the
+file including the directory of the endpoint, and a relative `moveExisting` is put below the directory of the file. So
+`moveExisting=backup/${file:name}` for `hello.txt` on the endpoint `file:/data/orders` moved the existing file to
+`/data/orders/backup/data/orders/hello.txt`; it is now moved to `/data/orders/backup/hello.txt`. An absolute
+`moveExisting` changes too: `/archive/${file:name}` moved it to `/archive/data/orders/hello.txt`, and now moves it to
+`/archive/hello.txt`; use `/archive/${file:parent}/${file:onlyname}` to keep the previous path. The tokens
+`${file:name.noext}` and `${file:name.noext.single}` read the same name and change the same way: `/data/orders/hello`
+is now `hello`. A backup kept in the nested directory is no longer found there, for example by the check for an
+existing backup when `eagerDeleteTargetFile=false`, or by a job that reads the backups. `${file:parent}`,
+`${file:onlyname}` and `${file:ext}` are unchanged, and so is a `moveExisting` without `${...}` such as
+`moveExisting=backup`. A result without a directory, such as `${file:onlyname}.bak`, is now always put in the
+directory of the file; before, it was put in the current directory when it started with the name of a relative
+endpoint directory (`orders-1.csv.bak` for `file:orders`).

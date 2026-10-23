@@ -45,7 +45,10 @@ public class GenericFileDefaultMoveExistingFileStrategy implements FileMoveExist
         Exchange dummy = endpoint.createExchange();
         String parent = FileUtil.onlyPath(fileName);
         String onlyName = FileUtil.stripPath(fileName);
-        dummy.getIn().setHeader(FileConstants.FILE_NAME, fileName);
+        // the file name is the name of the existing file in its directory (as with the ftp and sftp producers); a
+        // relative result is completed with that directory below. The given name has the directory of the endpoint,
+        // and with it ${file:name} would put that path again below the directory of the file
+        dummy.getIn().setHeader(FileConstants.FILE_NAME, onlyName);
         dummy.getIn().setHeader(FileConstants.FILE_NAME_ONLY, onlyName);
         dummy.getIn().setHeader(FileConstants.FILE_PARENT, parent);
 
@@ -56,6 +59,11 @@ public class GenericFileDefaultMoveExistingFileStrategy implements FileMoveExist
                     "moveExisting evaluated as empty String, cannot move existing file: " + fileName);
         }
 
+        // a name without a directory is a name in the directory of the file, also when it starts with the name of that
+        // directory (orders-1.csv.bak for file:orders), which completePartialRelativePath would take as complete
+        if (parent != null && FileUtil.onlyPath(to) == null) {
+            to = parent + "/" + to;
+        }
         to = completePartialRelativePath(to, onlyName, parent);
 
         // we must normalize it (to avoid having both \ and / in the name which
