@@ -2598,3 +2598,17 @@ With `crossOriginFilterOn=true`, the CORS responses now include `Access-Control-
 has an entry with a wildcard such as `https://*` or an entry `null`, the origin is still allowed, but without credentials. Previously credentials
 were allowed for every origin. A cross-origin client that sends cookies or other credentials must have its origin
 listed in `allowedOrigins`.
+
+=== camel-wal - the unconfirmed offsets of the previous run are replayed after a restart
+
+`WriteAheadResumeStrategy` now does what it is documented to do after a restart: when the consumer starts and loads the
+resume cache (`loadCache()`), the strategy replays the offsets of the previous run that the wrapped resume strategy did
+not confirm, by calling `updateLastOffset` on the wrapped strategy. Before, `start()` truncated the log file before
+`loadCache()` read it, so nothing was replayed. Only the last offset of each key in the log counts: it is replayed when
+its entry is in state `NEW` or `FAILED`, and an earlier offset of the same key is not replayed. These entries stay in
+the log until the wrapped strategy confirms them through its callback; a wrapped strategy that never calls back gets
+the last offset of each such key again at every start. The Kafka consumer does not call `loadCache()`, so with it the
+entries are kept in the log but not replayed. A replay that fails, or an entry that the resume adapter cannot
+deserialize, is logged with a WARN and does not stop the start of the route. If the last record of the log is
+incomplete (the JVM stopped while writing it) or invalid, the entries before it are replayed and a WARN is logged; the
+route still starts. A file that is not a log of this format is replaced by a new log, as before, with a WARN.

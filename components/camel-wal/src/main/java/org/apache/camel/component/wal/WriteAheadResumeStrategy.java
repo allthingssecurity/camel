@@ -20,11 +20,17 @@ package org.apache.camel.component.wal;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.camel.CamelContext;
 import org.apache.camel.CamelContextAware;
 import org.apache.camel.RuntimeCamelException;
+import org.apache.camel.component.wal.exceptions.InvalidRecordException;
 import org.apache.camel.resume.Deserializable;
 import org.apache.camel.resume.Offset;
 import org.apache.camel.resume.OffsetKey;
@@ -70,9 +76,17 @@ public class WriteAheadResumeStrategy implements ResumeStrategy, CamelContextAwa
         }
     }
 
+    /**
+     * An entry of the previous run that was not confirmed by the delegate resume strategy, and where it is in the new
+     * transaction log
+     */
+    private record UnconfirmedEntry(LogEntry logEntry, EntryInfo.CachedEntryInfo entryInfo) {
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(WriteAheadResumeStrategy.class);
     private File logFile;
     private LogWriter logWriter;
+    private List<UnconfirmedEntry> unconfirmedEntries = List.of();
     private ResumeStrategy resumeStrategy;
     private WriteAheadResumeStrategyConfiguration resumeStrategyConfiguration;
     private CamelContext camelContext;
@@ -143,29 +157,6 @@ public class WriteAheadResumeStrategy implements ResumeStrategy, CamelContextAwa
         }
     }
 
-    /**
-     * Handles the result of an offset update for persisted entries (i.e.: those already saved to permanent storage)
-     *
-     * @param entry the information about the entry that was updated
-     * @param t     a instance of any throwable class that was thrown by the delegate resume strategy during update, if
-     *              none, then can be null
-     */
-    private void handleResult(PersistedLogEntry entry, Throwable t) {
-        try {
-            if (t == null) {
-                logWriter.updateState(entry, LogEntry.EntryState.PROCESSED);
-            } else {
-                logWriter.updateState(entry, LogEntry.EntryState.FAILED);
-            }
-        } catch (IOException e) {
-            if (t == null) {
-                LOG.error("Unable to update state: {}", e.getMessage(), e);
-            } else {
-                LOG.error("Unable to mark the record as failed: {}", e.getMessage(), e);
-            }
-        }
-    }
-
     @Override
     public void updateLastOffset(OffsetKey<?> offsetKey, Offset<?> offsetValue) throws Exception {
         updateLastOffset(offsetKey, offsetValue, null);
@@ -224,43 +215,11 @@ public class WriteAheadResumeStrategy implements ResumeStrategy, CamelContextAwa
         }
     }
 
-    /**
-     * Tries to update the offset in the delegate strategy, ensuring the entry on log reflects the success or failure of
-     * the update request
-     *
-     * @param  offsetKey      the offset key to update
-     * @param  offsetValue    the offset value to update
-     * @param  entry          the entry being updated
-     * @param  updateCallBack a callback to be executed after the updated has occurred (null if not available)
-     * @throws Exception
-     */
-    private void tryUpdateDelegate(
-            OffsetKey<?> offsetKey, Offset<?> offsetValue, PersistedLogEntry entry, UpdateCallBack updateCallBack)
-            throws Exception {
-        try {
-            UpdateCallBack delegateCallback = resolveUpdateCallBack(entry, updateCallBack);
-
-            resumeStrategy.updateLastOffset(offsetKey, offsetValue, delegateCallback);
-        } catch (Throwable throwable) {
-            logWriter.updateState(entry, LogEntry.EntryState.FAILED);
-
-            throw throwable;
-        }
-    }
-
     private UpdateCallBack resolveUpdateCallBack(EntryInfo.CachedEntryInfo entryInfo, UpdateCallBack updateCallBack) {
         if (updateCallBack == null) {
             return t -> handleResult(entryInfo, t);
         } else {
             return new DelegateCallback(updateCallBack, t -> handleResult(entryInfo, t));
-        }
-    }
-
-    private UpdateCallBack resolveUpdateCallBack(PersistedLogEntry entry, UpdateCallBack updateCallBack) {
-        if (updateCallBack == null) {
-            return t -> handleResult(entry, t);
-        } else {
-            return new DelegateCallback(updateCallBack, t -> handleResult(entry, t));
         }
     }
 
@@ -270,37 +229,103 @@ public class WriteAheadResumeStrategy implements ResumeStrategy, CamelContextAwa
         resumeStrategy.loadCache();
         LOG.debug("Done loading cache for the delegate strategy");
 
-        try (LogReader reader = new LogReader(logFile)) {
+        final List<UnconfirmedEntry> entries = unconfirmedEntries;
+        unconfirmedEntries = List.of();
+        if (entries.isEmpty()) {
+            return;
+        }
 
-            int updatedCount = 0;
-            LOG.trace("Starting to read log entries");
-            PersistedLogEntry logEntry;
-            do {
-                logEntry = reader.readEntry();
-                if (logEntry != null) {
-                    final LogEntry.EntryState entryState = logEntry.getEntryState();
-                    if (entryState == LogEntry.EntryState.NEW || entryState == LogEntry.EntryState.FAILED) {
-                        final ResumeAdapter adapter = resumeStrategy.getAdapter();
+        final ResumeAdapter adapter = resumeStrategy.getAdapter();
+        if (!(adapter instanceof Deserializable deserializable)) {
+            LOG.warn("Not replaying the {} unconfirmed entries of the transaction log {}: the resume adapter {} cannot "
+                     + "deserialize them. They are kept in the log",
+                    entries.size(), logFile, adapter);
+            return;
+        }
 
-                        if (adapter instanceof Deserializable) {
-                            Deserializable deserializable = (Deserializable) adapter;
-
-                            Object oKey = deserializable.deserializeKey(ByteBuffer.wrap(logEntry.getKey()));
-                            Object value = deserializable.deserializeValue(ByteBuffer.wrap(logEntry.getValue()));
-
-                            tryUpdateDelegate(OffsetKeys.of(oKey), Offsets.of(value), logEntry, null);
-                            updatedCount++;
-                        }
-                    }
-                }
-
-            } while (logEntry != null);
-            LOG.trace("Finished reading log entries");
-
-            if (updatedCount == 0) {
-                logWriter.reset();
+        LOG.info("Replaying {} unconfirmed entries of the transaction log {}", entries.size(), logFile);
+        for (UnconfirmedEntry entry : entries) {
+            // as for a new offset, a failure is logged and does not stop the others (nor the start of the route)
+            try {
+                replay(deserializable, entry);
+            } catch (Exception e) {
+                LOG.warn("Unable to replay an unconfirmed entry of the transaction log {}: it is kept in the log and "
+                         + "replayed again on the next start. Reason: {}",
+                        logFile, e.getMessage(), e);
             }
         }
+        LOG.trace("Finished replaying the unconfirmed entries");
+    }
+
+    private void replay(Deserializable deserializable, UnconfirmedEntry entry) throws Exception {
+        Object oKey = deserializable.deserializeKey(ByteBuffer.wrap(entry.logEntry().getKey()));
+        Object value = deserializable.deserializeValue(ByteBuffer.wrap(entry.logEntry().getValue()));
+        if (oKey == null || value == null) {
+            LOG.warn("Not replaying an unconfirmed entry of the transaction log {}: the resume adapter cannot "
+                     + "deserialize its key or value. It is kept in the log",
+                    logFile);
+            return;
+        }
+
+        tryUpdateDelegate(OffsetKeys.of(oKey), Offsets.of(value), entry.entryInfo(), null);
+    }
+
+    /**
+     * Reads the entries that were not confirmed by the delegate resume strategy from the transaction log of the
+     * previous run. As the delegate keeps the last offset of each key, only the last entry of each key in the log
+     * counts: it is unconfirmed if it is in state NEW or FAILED. An earlier entry of the same key is superseded, so a
+     * FAILED offset does not replace a later one that the delegate confirmed. The log ends where a record is incomplete
+     * or invalid (i.e.: the last one, when the system crashed while writing it): the entries before it are kept.
+     *
+     * @param  logFile the transaction log file, which may not exist
+     * @return         the unconfirmed entries, in the order of the log
+     */
+    private static List<LogEntry> readUnconfirmedEntries(File logFile) {
+        final Map<ByteBuffer, LogEntry> lastEntries = new LinkedHashMap<>();
+        if (!logFile.isFile()) {
+            return List.of();
+        }
+
+        try (LogReader reader = new LogReader(logFile)) {
+            final Header header = reader.getHeader();
+            if (header == null) {
+                return List.of();
+            }
+
+            if (!Header.FORMAT_NAME.equals(header.getFormatName().trim())
+                    || header.getFileVersion() != Header.CURRENT_FILE_VERSION) {
+                LOG.warn("Not replaying the transaction log {}: it has an unknown format '{}' version {}, and a new log "
+                         + "replaces it",
+                        logFile, header.getFormatName().trim(), header.getFileVersion());
+                return List.of();
+            }
+
+            PersistedLogEntry logEntry;
+            while ((logEntry = reader.readEntry()) != null) {
+                final ByteBuffer key = ByteBuffer.wrap(logEntry.getKey());
+                // keep the keys in the order of their last entry
+                lastEntries.remove(key);
+                lastEntries.put(key, logEntry);
+            }
+        } catch (IOException | InvalidRecordException | IllegalArgumentException e) {
+            LOG.warn("Stopped reading the transaction log {} at an incomplete or invalid record, the rest of the log is "
+                     + "skipped: replaying the {} unconfirmed entries before it. Reason: {}",
+                    logFile, unconfirmed(lastEntries.values()).size(), e.getMessage());
+        }
+
+        return unconfirmed(lastEntries.values());
+    }
+
+    private static List<LogEntry> unconfirmed(Collection<LogEntry> entries) {
+        final List<LogEntry> unconfirmed = new ArrayList<>();
+        for (LogEntry entry : entries) {
+            final LogEntry.EntryState entryState = entry.getEntryState();
+            if (entryState == LogEntry.EntryState.NEW || entryState == LogEntry.EntryState.FAILED) {
+                unconfirmed.add(new LogEntry(
+                        entryState, entry.getKeyMetadata(), entry.getKey(), entry.getValueMetadata(), entry.getValue()));
+            }
+        }
+        return unconfirmed;
     }
 
     @Override
@@ -309,6 +334,9 @@ public class WriteAheadResumeStrategy implements ResumeStrategy, CamelContextAwa
             this.logFile = resumeStrategyConfiguration.getLogFile();
             this.resumeStrategy = resumeStrategyConfiguration.getDelegateResumeStrategy();
 
+            // the writer starts a new log, so read the entries of the previous run first
+            final List<LogEntry> entries = readUnconfirmedEntries(logFile);
+
             final ScheduledExecutorService executorService = camelContext.getExecutorServiceManager()
                     .newScheduledThreadPool(this, "SingleNodeKafkaResumeStrategy", 1);
 
@@ -316,6 +344,13 @@ public class WriteAheadResumeStrategy implements ResumeStrategy, CamelContextAwa
                     resumeStrategyConfiguration.getSupervisorInterval(),
                     executorService);
             logWriter = new LogWriter(logFile, flushPolicy);
+
+            // keep them in the new log until loadCache() replays them, in case the system crashes again before
+            final List<UnconfirmedEntry> carried = new ArrayList<>(entries.size());
+            for (LogEntry entry : entries) {
+                carried.add(new UnconfirmedEntry(entry, logWriter.append(entry)));
+            }
+            unconfirmedEntries = carried;
         } catch (Exception e) {
             throw new RuntimeCamelException(e);
         }
