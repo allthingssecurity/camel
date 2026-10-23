@@ -214,10 +214,16 @@ public class CaseInsensitiveMap extends AbstractMap<String, Object> implements S
             // table length changed, but hash is still valid
         }
         if (usedSlots >= keys.length) {
-            int newCap = keys.length + (keys.length >> 1);
-            keys = Arrays.copyOf(keys, newCap);
-            values = Arrays.copyOf(values, newCap);
-            chainNext = Arrays.copyOf(chainNext, newCap);
+            if (size <= keys.length / 2) {
+                // at least half of the slots belong to removed keys: reuse them instead of growing, so a map whose
+                // keys are put and removed again and again (headers in a loop) does not grow without bound
+                compactRemovedSlots();
+            } else {
+                int newCap = keys.length + (keys.length >> 1);
+                keys = Arrays.copyOf(keys, newCap);
+                values = Arrays.copyOf(values, newCap);
+                chainNext = Arrays.copyOf(chainNext, newCap);
+            }
         }
         int slot = usedSlots++;
         keys[slot] = key;
@@ -302,6 +308,46 @@ public class CaseInsensitiveMap extends AbstractMap<String, Object> implements S
         chainNext = newChainNext;
         usedSlots = newSlot;
         threshold = (int) (newTableCapacity * LOAD_FACTOR);
+    }
+
+    /**
+     * Moves the entries down over the slots of removed keys, keeping their order, and frees the slots at the end. The
+     * arrays keep their length, and the chains are relinked by the new index of each entry, so no key is hashed again.
+     */
+    private void compactRemovedSlots() {
+        int[] newIndex = new int[usedSlots];
+        int n = 0;
+        for (int i = 0; i < usedSlots; i++) {
+            if (keys[i] != null) {
+                newIndex[i] = n++;
+            }
+        }
+        // a chain only links the entries of keys that are in the map, as removing a key unlinks its slot
+        for (int b = 0; b < table.length; b++) {
+            if (table[b] != EMPTY) {
+                table[b] = newIndex[table[b]];
+            }
+        }
+        for (int i = 0; i < usedSlots; i++) {
+            if (keys[i] != null) {
+                // newIndex[i] <= i, so the slot written to has already been read
+                int j = newIndex[i];
+                int next = chainNext[i];
+                chainNext[j] = next == EMPTY ? EMPTY : newIndex[next];
+                keys[j] = keys[i];
+                values[j] = values[i];
+            }
+        }
+        Arrays.fill(keys, n, usedSlots, null);
+        Arrays.fill(values, n, usedSlots, null);
+        usedSlots = n;
+    }
+
+    /**
+     * The number of slots of the arrays that hold the entries, including the slots of removed keys (for tests).
+     */
+    int slotCapacity() {
+        return keys.length;
     }
 
     @Override
