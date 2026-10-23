@@ -247,10 +247,4 @@ public class QuickfixjEndpoint extends DefaultEndpoint implements QuickfixjEvent
     public QuickfixjEngine getEngine() {
         return engine;
     }
-
-    @Override
-    protected void doStop() throws Exception {
-        // clear list of consumers
-        consumers.clear();
-    }
 }
