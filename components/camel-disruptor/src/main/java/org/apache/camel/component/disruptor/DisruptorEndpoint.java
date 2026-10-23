@@ -268,6 +268,27 @@ public class DisruptorEndpoint extends DefaultEndpoint implements AsyncEndpoint,
     }
 
     @Override
+    public void stop() {
+        // the routes that consume from the same uri share this endpoint, and removing one of them stops and shuts down
+        // the endpoint of its consumer: that must not shut down the disruptor of the other consumers
+        if (consumers.isEmpty()) {
+            super.stop();
+        } else {
+            LOGGER.debug("Not stopping endpoint {} as it still has {} consumer(s)", getEndpointUri(), consumers.size());
+        }
+    }
+
+    @Override
+    public void shutdown() {
+        if (consumers.isEmpty()) {
+            super.shutdown();
+        } else {
+            LOGGER.debug("Not shutting down endpoint {} as it still has {} consumer(s)", getEndpointUri(),
+                    consumers.size());
+        }
+    }
+
+    @Override
     protected void doStop() throws Exception {
         // notify reference we are shutting down this endpoint
         disruptorReference.removeEndpoint(this);
