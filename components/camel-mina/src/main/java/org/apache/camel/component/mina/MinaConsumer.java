@@ -328,6 +328,15 @@ public class MinaConsumer extends DefaultConsumer {
         return muted;
     }
 
+    /**
+     * Whether the textline codec writes the reply: as in configureCodecFactory, not with a codec of the endpoint, and
+     * not for datagrams, which have their own codec.
+     */
+    private boolean isTextlineCodec() {
+        return configuration.isTextline() && configuration.getCodec() == null && configuration.isAllowDefaultCodec()
+                && !configuration.isDatagramProtocol();
+    }
+
     private void addCodecFactory(IoService service, ProtocolCodecFactory codecFactory) {
         service.getFilterChain().addLast("codec", new ProtocolCodecFilter(codecFactory));
     }
@@ -470,6 +479,16 @@ public class MinaConsumer extends DefaultConsumer {
                     } else {
                         // failed and no exception, must be a fault
                         response = exchange.getOut().getBody();
+                    }
+                }
+
+                // the textline codec writes the text of the body, so convert it as the producer does (a byte[] or a
+                // stream cache would else be written as its Java object text, such as [B@1b6d3586)
+                if (response != null && isTextlineCodec()) {
+                    Object text = getEndpoint().getCamelContext().getTypeConverter().convertTo(String.class, exchange,
+                            response);
+                    if (text != null) {
+                        response = text;
                     }
                 }
 
