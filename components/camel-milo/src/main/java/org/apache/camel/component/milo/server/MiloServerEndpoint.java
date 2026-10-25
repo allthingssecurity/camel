@@ -21,6 +21,7 @@ import org.apache.camel.Component;
 import org.apache.camel.Consumer;
 import org.apache.camel.Processor;
 import org.apache.camel.Producer;
+import org.apache.camel.component.milo.server.internal.CamelNamespace;
 import org.apache.camel.component.milo.server.internal.CamelServerItem;
 import org.apache.camel.spi.BodyType;
 import org.apache.camel.spi.BodyType.Carrier;
@@ -72,11 +73,28 @@ public class MiloServerEndpoint extends DefaultEndpoint {
 
     @Override
     protected void doStop() throws Exception {
+        // the endpoint is stopped when a route that consumes from it is removed, also when other routes still use the
+        // item: the item is disposed (its node removed from the Items folder) when the last endpoint, producer or
+        // consumer releases it
         if (this.item != null) {
-            this.item.dispose();
             this.item = null;
+            releaseItem();
         }
         super.doStop();
+    }
+
+    /**
+     * Gets the item for a producer or consumer, which releases it with {@link #releaseItem()} when it stops.
+     */
+    CamelServerItem retainItem() {
+        return this.getComponent().getNamespace().getOrAddItem(this.itemId);
+    }
+
+    void releaseItem() {
+        CamelNamespace namespace = this.getComponent().getNamespace();
+        if (namespace != null) {
+            namespace.releaseItem(this.itemId);
+        }
     }
 
     @Override
@@ -89,10 +107,6 @@ public class MiloServerEndpoint extends DefaultEndpoint {
         MiloServerConsumer consumer = new MiloServerConsumer(this, processor);
         configureConsumer(consumer);
         return consumer;
-    }
-
-    CamelServerItem getItem() {
-        return item;
     }
 
     /**

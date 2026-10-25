@@ -47,6 +47,8 @@ public class CamelNamespace extends ManagedNamespaceWithLifecycle {
 
     private final Lock lock = new ReentrantLock();
     private final Map<String, CamelServerItem> itemMap = new HashMap<>();
+    // how many endpoints, producers and consumers use each item, guarded by lock
+    private final Map<String, Integer> itemUsers = new HashMap<>();
 
     private final BinaryDataTypeDictionaryManager dictionaryManager;
 
@@ -126,11 +128,43 @@ public class CamelNamespace extends ManagedNamespaceWithLifecycle {
         this.subscriptionModel.onMonitoringModeChanged(monitoredItems);
     }
 
+    /**
+     * Gets the item, and creates it (a variable node in the Items folder) when it is not there. The caller is counted
+     * as a user of the item until it calls {@link #releaseItem(String)}.
+     */
     public CamelServerItem getOrAddItem(final String itemId) {
         lock.lock();
         try {
-            return this.itemMap.computeIfAbsent(itemId,
+            CamelServerItem item = this.itemMap.computeIfAbsent(itemId,
                     k -> new CamelServerItem(itemId, getNodeContext(), getNamespaceIndex(), this.itemsObject));
+            this.itemUsers.merge(itemId, 1, Integer::sum);
+            return item;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * A user of the item no longer uses it: the last one disposes the item, which removes its node from the Items
+     * folder, and drops it, so that a later use creates a new item (whose node replaces the old one in the node
+     * manager).
+     */
+    public void releaseItem(final String itemId) {
+        lock.lock();
+        try {
+            Integer users = this.itemUsers.get(itemId);
+            if (users == null) {
+                return;
+            }
+            if (users > 1) {
+                this.itemUsers.put(itemId, users - 1);
+                return;
+            }
+            this.itemUsers.remove(itemId);
+            CamelServerItem item = this.itemMap.remove(itemId);
+            if (item != null) {
+                item.dispose();
+            }
         } finally {
             lock.unlock();
         }

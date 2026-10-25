@@ -43,13 +43,17 @@ public class MiloServerConsumer extends DefaultConsumer {
     @Override
     protected void doStart() throws Exception {
         super.doStart();
-        this.item = getEndpoint().getItem();
+        this.item = getEndpoint().retainItem();
         this.item.addWriteListener(this.writeHandler);
     }
 
     @Override
     protected void doStop() throws Exception {
-        this.item.removeWriteListener(this.writeHandler);
+        if (this.item != null) {
+            this.item.removeWriteListener(this.writeHandler);
+            this.item = null;
+            getEndpoint().releaseItem();
+        }
         super.doStop();
     }
 

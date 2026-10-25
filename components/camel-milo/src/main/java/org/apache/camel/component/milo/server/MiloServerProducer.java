@@ -27,6 +27,8 @@ public class MiloServerProducer extends DefaultProducer {
     private static final Logger LOG = LoggerFactory.getLogger(MiloServerProducer.class);
 
     private CamelServerItem item;
+    // whether this producer counts as a user of the item, so that only a producer that started releases it
+    private volatile boolean retained;
 
     public MiloServerProducer(final MiloServerEndpoint endpoint) {
         super(endpoint);
@@ -40,7 +42,17 @@ public class MiloServerProducer extends DefaultProducer {
     @Override
     protected void doStart() throws Exception {
         super.doStart();
-        this.item = getEndpoint().getItem();
+        this.item = getEndpoint().retainItem();
+        retained = true;
+    }
+
+    @Override
+    protected void doStop() throws Exception {
+        if (retained) {
+            retained = false;
+            getEndpoint().releaseItem();
+        }
+        super.doStop();
     }
 
     @Override
