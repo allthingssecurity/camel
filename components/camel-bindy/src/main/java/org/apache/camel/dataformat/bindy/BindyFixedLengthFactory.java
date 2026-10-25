@@ -225,9 +225,11 @@ public class BindyFixedLengthFactory extends BindyAbstractFactory implements Bin
                 final UnicodeHelper tempToken = new UnicodeHelper(
                         unicodeHelper.substring(offset - 1, unicodeHelper.length()),
                         (this.countGrapheme) ? UnicodeHelper.Method.GRAPHEME : UnicodeHelper.Method.CODEPOINTS);
-                token = tempToken.substring(0, tempToken.indexOf(delimiter));
-                // include the delimiter in the offset calculation
-                offset += token.length() + 1;
+                final int tokenLength = tempToken.indexOf(delimiter);
+                token = tempToken.substring(0, tokenLength);
+                // the offset counts code points (or graphemes) like the record, so move it past the token and the
+                // whole delimiter in that unit, not in UTF-16 chars
+                offset += tokenLength + new UnicodeHelper(delimiter, unicodeHelper.getMethod()).length();
             } else {
                 // defined as a zero-length field
                 token = "";
