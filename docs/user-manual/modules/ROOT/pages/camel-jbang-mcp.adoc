@@ -857,6 +857,12 @@ process is running).
 | Control a route: start, stop, suspend, or resume it by route ID. Marked destructive for all four commands, as an
   MCP hint applies to a tool, not to one of its arguments, and stop and suspend take the route's consumer offline.
 
+| `camel_runtime_chaos`
+| (Prototype, dev/test only.) Inject faults through `camel-chaos`: fail or slow down calls to endpoints matching a
+  pattern, or stall a route consumer, and read the report (faults injected, redeliveries, failures handled by the
+  error handler, health before/during/after, recovered or not). Needs `camel-chaos` in the application and
+  `camel.chaos.enabled=true`; refused with profile `prod`.
+
 | `camel_runtime_route_topology`
 | Get the inter-route topology showing how routes connect to each other and to external endpoints.
   Returns nodes and edges describing the route graph.
