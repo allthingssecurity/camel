@@ -56,6 +56,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- a chaos run inside a deterministic simulation (virtual time, replay from the seed) -->
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-test-dst</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.apache.camel</groupId>
             <artifactId>camel-console</artifactId>
             <scope>test</scope>

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.camel.CamelContext;
@@ -73,7 +74,7 @@ public class ChaosRule {
     private volatile Map<String, Object> healthDuring;
     private volatile Map<String, Object> healthAfter;
     private volatile long stallStartedAt;
-    private volatile Thread suspender;
+    private volatile Future<?> suspender;
     private boolean stallTriggered;
 
     public static ChaosRule fail(String pattern, double probability) {
@@ -240,11 +241,11 @@ public class ChaosRule {
         return true;
     }
 
-    Thread getSuspender() {
+    Future<?> getSuspender() {
         return suspender;
     }
 
-    void setSuspender(Thread suspender) {
+    void setSuspender(Future<?> suspender) {
         this.suspender = suspender;
     }
 

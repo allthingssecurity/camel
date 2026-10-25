@@ -19,7 +19,6 @@ package org.apache.camel.chaos;
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HexFormat;
@@ -29,6 +28,8 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -52,6 +53,7 @@ import org.apache.camel.spi.InterceptStrategy;
 import org.apache.camel.support.EventHelper;
 import org.apache.camel.support.EventNotifierSupport;
 import org.apache.camel.support.service.ServiceSupport;
+import org.apache.camel.util.TimeSource;
 import org.apache.camel.util.json.JsonObject;
 import org.apache.camel.util.json.Jsoner;
 import org.slf4j.Logger;
@@ -69,6 +71,10 @@ import org.slf4j.LoggerFactory;
  * <li>{@code RouteController}: a stall rule suspends a route consumer and resumes it later.</li>
  * <li>{@link HealthCheckHelper}: health is sampled before, during and after each rule (when camel-health is
  * present).</li>
+ * <li>{@link TimeSource}: every clock read and sleep (rule expiry, stall durations, latencies, report and health
+ * timestamps) goes through Camel's internal time source, and the expiry check and the route suspends run on pools of
+ * the {@code ExecutorServiceManager}. In a camel-test-dst run the rules therefore live in the run's virtual time and
+ * the report is a function of the seed.</li>
  * </ul>
  * Chaos is off by default: rules can only be added when {@code camel.chaos.enabled=true} and the Camel profile is not
  * {@code prod}.
@@ -94,6 +100,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     private final List<Expectation> expectations = new CopyOnWriteArrayList<>();
     private final List<Invariant> invariants = new CopyOnWriteArrayList<>();
     private ScheduledExecutorService scheduler;
+    private ExecutorService suspendExecutor;
     private final ChaosEventNotifier notifier = new ChaosEventNotifier();
 
     /**
@@ -211,8 +218,11 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         if (s != null) {
             seed = Long.parseLong(s.trim());
         }
+        // both pools come from the ExecutorServiceManager, and every clock read and sleep goes through TimeSource: in a
+        // camel-test-dst run the expiry check, the suspends, the stall durations and the latencies run in virtual time
         scheduler = camelContext.getExecutorServiceManager().newSingleThreadScheduledExecutor(this, "ChaosManager");
         scheduler.scheduleWithFixedDelay(this::expireRules, 100, 100, TimeUnit.MILLISECONDS);
+        suspendExecutor = camelContext.getExecutorServiceManager().newCachedThreadPool(this, "ChaosSuspendRoute");
     }
 
     @Override
@@ -220,6 +230,10 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         if (scheduler != null) {
             camelContext.getExecutorServiceManager().shutdownNow(scheduler);
             scheduler = null;
+        }
+        if (suspendExecutor != null) {
+            camelContext.getExecutorServiceManager().shutdownNow(suspendExecutor);
+            suspendExecutor = null;
         }
     }
 
@@ -260,7 +274,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             }
         }
         rule.setHealthBefore(healthSnapshot());
-        rule.activate(seq, seed, System.currentTimeMillis());
+        rule.activate(seq, seed, TimeSource.currentTimeMillis());
         rules.add(rule);
         List<ChaosRule> copy = new ArrayList<>(activeRules);
         copy.add(rule);
@@ -322,10 +336,10 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
     }
 
     synchronized void expireRules() {
-        long now = System.currentTimeMillis();
+        long now = TimeSource.currentTimeMillis();
         for (ChaosRule r : activeRules) {
-            Thread suspender = r.getSuspender();
-            if (r.getType() == ChaosRule.Type.STALL && (suspender != null && suspender.isAlive()
+            Future<?> suspender = r.getSuspender();
+            if (r.getType() == ChaosRule.Type.STALL && (suspender != null && !suspender.isDone()
                     || r.getRouteId() != null && camelContext.getRouteController()
                             .getRouteStatus(r.getRouteId()) == ServiceStatus.Suspending)) {
                 // the route is still finishing its in-flight exchanges: resume it once it is suspended
@@ -360,7 +374,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         String routeId = rule.getRouteId();
         try {
             camelContext.getRouteController().suspendRoute(routeId);
-            rule.stallStarted(System.currentTimeMillis());
+            rule.stallStarted(TimeSource.currentTimeMillis());
             ServiceStatus st = camelContext.getRouteController().getRouteStatus(routeId);
             rule.roll(routeId);
             stats(routeId).faults.incrementAndGet();
@@ -382,37 +396,42 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             endRule(rule, "stall-failed: the exchange has no route");
             return;
         }
+        ExecutorService suspendExecutor = this.suspendExecutor;
+        if (suspendExecutor == null) {
+            endRule(rule, "stall-failed: the chaos manager is not started");
+            return;
+        }
         stats(routeId).faults.incrementAndGet();
         stats(routeId).markFault();
-        Thread suspender = new Thread(() -> {
+        // on a pool of the ExecutorServiceManager rather than an own thread: in a camel-test-dst run the suspend is then
+        // a task of the seeded scheduler instead of an escape
+        Future<?> suspender = suspendExecutor.submit(() -> {
             try {
                 camelContext.getRouteController().suspendRoute(routeId);
                 // the stall lasts durationMs from the moment the route is suspended
-                rule.stallStarted(System.currentTimeMillis());
+                rule.stallStarted(TimeSource.currentTimeMillis());
                 event("route-suspended", rule.getId(), routeId);
             } catch (Exception e) {
                 event("route-suspend-failed", rule.getId(), routeId + ": " + e.getMessage());
             }
-        }, "ChaosSuspendRoute-" + routeId);
-        suspender.setDaemon(true);
+        });
         rule.setSuspender(suspender);
-        suspender.start();
         Consumer consumer = camelContext.getRoute(routeId).getConsumer();
         // a batch consumer: wait until the suspend has reached it, so it stops in the middle of its batch. Any other
         // consumer: do not wait, the suspend waits for this very exchange to complete
-        long deadline = System.currentTimeMillis() + 10_000;
-        while (consumer instanceof BatchConsumer bc && System.currentTimeMillis() < deadline) {
+        long deadline = TimeSource.currentTimeMillis() + 10_000;
+        while (consumer instanceof BatchConsumer bc && TimeSource.currentTimeMillis() < deadline) {
             if (!bc.isBatchAllowed()) {
                 break;
             }
             try {
-                Thread.sleep(5);
+                TimeSource.sleep(5);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             }
         }
-        rule.stallStarted(System.currentTimeMillis());
+        rule.stallStarted(TimeSource.currentTimeMillis());
         event("route-stalled", rule.getId(), routeId + " during an exchange ("
                                              + camelContext.getRouteController().getRouteStatus(routeId) + ")");
         rule.setHealthDuring(healthSnapshot());
@@ -447,7 +466,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         if (list.isEmpty()) {
             return null;
         }
-        long now = System.currentTimeMillis();
+        long now = TimeSource.currentTimeMillis();
         for (ChaosRule r : list) {
             if (!r.isActive() || r.getPattern() == null) {
                 continue;
@@ -475,7 +494,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
             }
             if (r.getType() == ChaosRule.Type.LATENCY) {
                 try {
-                    Thread.sleep(r.getDelayMs());
+                    TimeSource.sleep(r.getDelayMs());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -534,7 +553,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
 
     Map<String, Object> healthSnapshot() {
         Map<String, Object> answer = new LinkedHashMap<>();
-        answer.put("time", Instant.now().toString());
+        answer.put("time", TimeSource.instant().toString());
         Collection<HealthCheck.Result> results;
         try {
             results = HealthCheckHelper.invoke(camelContext);
@@ -829,7 +848,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
 
     private void event(String type, String ruleId, String detail) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("time", Instant.now().toString());
+        m.put("time", TimeSource.instant().toString());
         m.put("event", type);
         if (ruleId != null) {
             m.put("rule", ruleId);
@@ -856,7 +875,7 @@ public class ChaosManager extends ServiceSupport implements CamelContextAware, I
         volatile long lastFaultAt;
 
         void markFault() {
-            lastFaultAt = System.currentTimeMillis();
+            lastFaultAt = TimeSource.currentTimeMillis();
             completedAfterLastFault.set(0);
         }
 
