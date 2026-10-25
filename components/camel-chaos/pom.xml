@@ -87,4 +87,24 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>com.mycila</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <configuration>
+                    <licenseSets>
+                        <licenseSet>
+                            <excludes combine.children="append">
+                                <!-- the Lean and TLA+ models carry the ASF header in their own comment syntax -->
+                                <exclude>models/*.lean</exclude>
+                                <exclude>models/*.tla</exclude>
+                            </excludes>
+                        </licenseSet>
+                    </licenseSets>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
