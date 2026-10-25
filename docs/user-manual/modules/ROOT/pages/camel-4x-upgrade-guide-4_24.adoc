@@ -69,6 +69,13 @@ or payload from the body after a timed out `pollEnrich` must keep it before the 
 with the same message id, headers and attachments, so after a timeout it is no longer of the message type of the
 consumer (such as `GenericFileMessage` or `JmsMessage`).
 
+=== camel-util - FilterIterator.remove after hasNext throws IllegalStateException
+
+`FilterIterator.hasNext()` looks ahead in the iterator it wraps, so a `remove()` after `next()` and then `hasNext()`
+removed the element after the one `next()` returned, and a `remove()` before any `next()` removed an element as well.
+`remove()` now throws `IllegalStateException` unless it directly follows `next()`. Code that called `hasNext()`
+between `next()` and `remove()` must call `remove()` first.
+
 === camel-main - a failure to start is logged
 
 A Camel Main application that fails to start now logs why, at ERROR: `Error starting Camel: ...` with the stack trace,
