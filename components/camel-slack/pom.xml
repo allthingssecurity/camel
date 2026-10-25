@@ -56,6 +56,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- chaos test of the suspend-in-the-middle-of-a-poll case (CAMEL-25684) -->
+            <groupId>org.apache.camel</groupId>
+            <artifactId>camel-chaos</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.apache.camel</groupId>
             <artifactId>camel-undertow</artifactId>
             <scope>test</scope>
