@@ -60,8 +60,20 @@ public class FinallyProcessor extends BaseDelegateProcessorSupport
             }
         }
 
+        // a route called from the doTry (such as with direct) can have handled a failure with its error handler (dead
+        // letter channel or a handled onException), which marks the exchange as handled by the error handler. The route
+        // then does not continue after the doTry, but the doFinally block must still run all its steps, and a pipeline
+        // stops before its second step when the exchange has that mark. So the mark is cleared while the block runs,
+        // and set again afterwards (unless the block set it again itself)
+        final boolean errorHandlerHandled = exchange.getExchangeExtension().isErrorHandlerHandledSet()
+                && exchange.getExchangeExtension().isErrorHandlerHandled();
+        if (errorHandlerHandled) {
+            exchange.getExchangeExtension().setErrorHandlerHandled(null);
+        }
+
         // continue processing
-        return processor.process(exchange, new FinallyAsyncCallback(exchange, callback, exception));
+        return processor.process(exchange,
+                new FinallyAsyncCallback(exchange, callback, exception, errorHandlerHandled));
     }
 
     @Override
@@ -114,16 +126,23 @@ public class FinallyProcessor extends BaseDelegateProcessorSupport
         private final Exchange exchange;
         private final AsyncCallback callback;
         private final Exception exception;
+        private final boolean errorHandlerHandled;
 
-        FinallyAsyncCallback(Exchange exchange, AsyncCallback callback, Exception exception) {
+        FinallyAsyncCallback(Exchange exchange, AsyncCallback callback, Exception exception,
+                             boolean errorHandlerHandled) {
             this.exchange = exchange;
             this.callback = callback;
             this.exception = exception;
+            this.errorHandlerHandled = errorHandlerHandled;
         }
 
         @Override
         public void done(boolean doneSync) {
             try {
+                if (errorHandlerHandled && !exchange.getExchangeExtension().isErrorHandlerHandledSet()) {
+                    // the doFinally block has run, so the route does not continue after the doTry, as before
+                    exchange.getExchangeExtension().setErrorHandlerHandled(true);
+                }
                 if (exception == null) {
                     // only clear the failure details when the doFinally did not fail
                     // (the doTry restores the failure details of an earlier failure)
