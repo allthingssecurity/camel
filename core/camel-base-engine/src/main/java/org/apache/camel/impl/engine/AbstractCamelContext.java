@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -264,6 +265,9 @@ public abstract class AbstractCamelContext extends BaseService
         }
     };
     private final Lock lock = new ReentrantLock();
+    // the endpoints that a removed route consumed from and left started for the other routes that still use them,
+    // guarded by lock: the last of those routes to be removed stops and shuts them down
+    private final Set<Endpoint> endpointsLeftToOtherRoutes = Collections.newSetFromMap(new IdentityHashMap<>());
     private VetoCamelContextStartException vetoed;
     private String managementName;
     private ClassLoader applicationContextClassLoader;
@@ -1611,6 +1615,17 @@ public abstract class AbstractCamelContext extends BaseService
 
     private void doRemove(
             String routeId, LoggingLevel loggingLevel, RouteService routeService, Map<String, Set<Endpoint>> endpointsInUse) {
+        // other routes may still use the endpoint of the route (consume from it or send to it), which must then
+        // stay started for them
+        Endpoint input = routeService.getRoute().getEndpoint();
+        boolean inputUsedByOtherRoutes = isUsedByOtherRoutes(input, routeId, endpointsInUse);
+        routeService.setEndpointUsedByOtherRoutes(inputUsedByOtherRoutes);
+        if (inputUsedByOtherRoutes) {
+            endpointsLeftToOtherRoutes.add(input);
+        } else {
+            // the route service stops and shuts it down
+            endpointsLeftToOtherRoutes.remove(input);
+        }
         routeService.setRemovingRoutes(true);
         shutdownRouteService(routeService, loggingLevel);
         routeServices.remove(routeId);
@@ -1643,9 +1658,35 @@ public abstract class AbstractCamelContext extends BaseService
             }
         }
         for (Endpoint endpoint : toRemove) {
+            if (endpointsLeftToOtherRoutes.remove(endpoint)) {
+                // a route that consumed from it was removed before and left it started for this route: shut it down
+                // now, as removing that route would have done
+                LOG.debug("Stopping and shutting down: {} which was last in use by route: {}", endpoint, routeId);
+                try {
+                    ServiceHelper.stopAndShutdownService(endpoint);
+                } catch (Exception e) {
+                    LOG.warn("Error shutting down endpoint {}. This exception will be ignored.", endpoint, e);
+                }
+            }
             LOG.debug("Removing: {} which was only in use by route: {}", endpoint, routeId);
             removeEndpoint(endpoint);
         }
+    }
+
+    private static boolean isUsedByOtherRoutes(
+            Endpoint endpoint, String routeId, Map<String, Set<Endpoint>> endpointsInUse) {
+        for (Map.Entry<String, Set<Endpoint>> entry : endpointsInUse.entrySet()) {
+            if (!routeId.equals(entry.getKey())) {
+                for (Endpoint other : entry.getValue()) {
+                    // by identity: each route has its own instance of an endpoint that is not a singleton, which is
+                    // stopped with its route although it is equal to the others (same uri)
+                    if (other == endpoint) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     public void suspendRoute(String routeId) throws Exception {
@@ -3418,6 +3459,12 @@ public abstract class AbstractCamelContext extends BaseService
 
         InternalServiceManager.shutdownServices(this, endpoints.values());
         endpoints.clear();
+        lock.lock();
+        try {
+            endpointsLeftToOtherRoutes.clear();
+        } finally {
+            lock.unlock();
+        }
 
         InternalServiceManager.shutdownServices(this, components.values());
         components.clear();

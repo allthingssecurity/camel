@@ -63,6 +63,7 @@ public class RouteService extends ChildServiceSupport {
     private final StartupStepRecorder startupStepRecorder;
     private final Route route;
     private boolean removingRoutes;
+    private boolean endpointUsedByOtherRoutes;
     private Consumer input;
     private final Lock lock = new ReentrantLock();
     private final AtomicBoolean setUpDone = new AtomicBoolean();
@@ -121,6 +122,18 @@ public class RouteService extends ChildServiceSupport {
 
     public void setRemovingRoutes(boolean removingRoutes) {
         this.removingRoutes = removingRoutes;
+    }
+
+    public boolean isEndpointUsedByOtherRoutes() {
+        return endpointUsedByOtherRoutes;
+    }
+
+    /**
+     * Whether other routes still use the endpoint of this route (as their consumer or producer endpoint), so shutting
+     * down this route (when it is removed) must not stop and shut down the endpoint.
+     */
+    public void setEndpointUsedByOtherRoutes(boolean endpointUsedByOtherRoutes) {
+        this.endpointUsedByOtherRoutes = endpointUsedByOtherRoutes;
     }
 
     public void warmUp() throws FailedToStartRouteException {
@@ -334,8 +347,11 @@ public class RouteService extends ChildServiceSupport {
             ServiceHelper.stopAndShutdownServices(route);
 
             // endpoints should only be stopped when Camel is shutting down
-            // see more details in the warmUp method
-            ServiceHelper.stopAndShutdownServices(route.getEndpoint());
+            // see more details in the warmUp method; a removed route leaves the endpoint to the other
+            // routes that still use it, and the endpoint is stopped and shut down when the last of them is removed
+            if (!endpointUsedByOtherRoutes) {
+                ServiceHelper.stopAndShutdownServices(route.getEndpoint());
+            }
 
             // invoke callbacks on route policy
             routePolicyCallback(RoutePolicy::onRemove);

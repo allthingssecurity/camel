@@ -69,6 +69,15 @@ or payload from the body after a timed out `pollEnrich` must keep it before the 
 with the same message id, headers and attachments, so after a timeout it is no longer of the message type of the
 consumer (such as `GenericFileMessage` or `JmsMessage`).
 
+=== camel-core - removing a route keeps the endpoint that other routes still use
+
+When a route was removed (`removeRoute`, or a route reload that removes it), Camel stopped and shut down the endpoint
+the route consumes from, also when other routes still consumed from that endpoint or sent to it. Many endpoints close
+their client when they stop, so the other routes then failed: for example a route sending to `aws2-sqs:orders` failed
+with `Connection pool shut down` after the route consuming from `aws2-sqs:orders` was removed. The endpoint now stays
+started while another route consumes from it or sends to it with `to`, and is stopped and shut down when the last of
+these routes is removed.
+
 === camel-main - a failure to start is logged
 
 A Camel Main application that fails to start now logs why, at ERROR: `Error starting Camel: ...` with the stack trace,
