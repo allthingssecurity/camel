@@ -82,6 +82,11 @@ successful exchange opened the circuit again as long as the failures that opened
 the defaults (a window of 60 seconds, a half open check after 30 seconds) a success in the first 30 seconds after the
 half open check therefore kept the circuit open. A `halfOpenHandler` decides as before.
 
+The half open check now runs on a thread pool created through the `ExecutorServiceManager` (one thread, named
+`ThrottlingExceptionRoutePolicy` and managed like the other thread pools of Camel), instead of a new `java.util.Timer`
+thread each time the circuit opens. The thread is created when the circuit opens the first time, and it ends when the
+last route of the policy is removed or the policy is stopped.
+
 === camel-main - a failure to start is logged
 
 A Camel Main application that fails to start now logs why, at ERROR: `Error starting Camel: ...` with the stack trace,
