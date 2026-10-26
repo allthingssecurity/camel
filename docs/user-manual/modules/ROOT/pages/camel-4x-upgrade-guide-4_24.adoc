@@ -3591,3 +3591,14 @@ Use `0.0.0.0` as the host to accept connections on all network interfaces.
 
 `AvroRpcHttpServerFactory` has a new method `create(SpecificResponder, String, int)` that receives the host. A custom factory should implement it.
 
+=== camel-once - the consumer fires on a Camel thread pool
+
+The once consumer now fires its route on a single thread scheduled executor that it creates through the
+`ExecutorServiceManager` when the route starts and shuts down when the route stops, so the thread is named
+`Camel (<context>) thread #N - <name>` instead of `<name>`. Before, each once consumer created a non-daemon
+`java.util.Timer` thread when it was created, and that thread stayed alive after its route was stopped and after the
+CamelContext was stopped (after its route was removed, until the consumer was garbage collected). A once route that is
+stopped and started again now fires again, and so does a once route after the CamelContext is stopped and started
+again; before, the start failed with `IllegalStateException: Task already scheduled or cancelled`.
+
+The protected method `OnceConsumer.scheduleTask(TimerTask, Timer)` is replaced by `scheduleTask()`.
