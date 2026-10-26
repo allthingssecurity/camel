@@ -45,11 +45,11 @@ class SplitterThresholdStopKeepsOriginalMessageTest extends ContextTestSupport {
     private final RecordingAggregationStrategy stopStrategy = new RecordingAggregationStrategy();
     private final RecordingAggregationStrategy maxStrategy = new RecordingAggregationStrategy();
 
-    private Exchange send(String uri, String body) {
+    private Exchange send(String uri, Object body) {
         return send(uri, body, false);
     }
 
-    private Exchange send(String uri, String body, boolean transacted) {
+    private Exchange send(String uri, Object body, boolean transacted) {
         return template.send(uri, e -> {
             e.getMessage().setBody(body);
             e.getMessage().setHeader("orig", "yes");
@@ -59,12 +59,17 @@ class SplitterThresholdStopKeepsOriginalMessageTest extends ContextTestSupport {
     }
 
     private static void assertOriginalKept(Exchange out, String body) {
-        assertInstanceOf(CamelExchangeException.class, out.getException());
         assertInstanceOf(IllegalStateException.class, out.getException().getCause());
+        assertOriginalKept(out, (Object) body);
+    }
+
+    private static void assertOriginalKept(Exchange out, Object body) {
+        assertInstanceOf(CamelExchangeException.class, out.getException());
         assertEquals(body, out.getMessage().getBody(), "body of the original message");
         assertEquals("yes", out.getMessage().getHeader("orig"));
         assertNull(out.getMessage().getHeader("item"), "header of the failed split item");
         assertNull(out.getProperty("itemProp"), "property of the failed split item");
+        assertNull(out.getVariable("itemVar"), "variable of the failed split item");
         assertEquals("yes", out.getProperty("origProp"), "property removed in the failed split item");
     }
 
@@ -82,7 +87,35 @@ class SplitterThresholdStopKeepsOriginalMessageTest extends ContextTestSupport {
 
     @Test
     void maxFailedRecordsAfterToleratedFailureKeepsOriginal() {
-        assertOriginalKept(send("direct:max2", "a,b,c"), "a,b,c");
+        Exchange out = send("direct:max2", "a,b,c");
+        assertOriginalKept(out, "a,b,c");
+        // the split result still has the index and the exception of each failed item
+        SplitResult result = out.getProperty(Exchange.SPLIT_RESULT, SplitResult.class);
+        assertTrue(result.isAborted());
+        assertEquals(List.of(0, 1), result.getFailures().stream().map(SplitResult.Failure::index).toList());
+        assertInstanceOf(IllegalStateException.class, result.getFailures().get(1).exception());
+    }
+
+    @Test
+    void shareUnitOfWorkMaxFailedRecordsKeepsOriginal() {
+        assertOriginalKept(send("direct:share", "a,b,c"), "a,b,c");
+    }
+
+    @Test
+    void nestedSplitKeepsOriginalOfOuterSplit() {
+        // only the outer split has a threshold, the inner split fails the outer item
+        List<List<String>> body = List.of(List.of("a", "FAIL"), List.of("b"));
+        Exchange out = send("direct:nested", body);
+        assertOriginalKept(out, body);
+        assertNull(out.getMessage().getHeader("outerItem"), "header of the failed outer split item");
+    }
+
+    @Test
+    void nestedSplitsWithThresholdsKeepOriginalOfOuterSplit() {
+        List<List<String>> body = List.of(List.of("a", "FAIL"), List.of("b"));
+        Exchange out = send("direct:nestedBoth", body);
+        assertOriginalKept(out, body);
+        assertNull(out.getMessage().getHeader("outerItem"), "header of the failed outer split item");
     }
 
     @Test
@@ -180,6 +213,16 @@ class SplitterThresholdStopKeepsOriginalMessageTest extends ContextTestSupport {
                 from("direct:ratio").split(body()).errorThreshold(0.5).to("direct:item").end();
                 from("direct:parallel").split(body()).parallelProcessing().maxFailedRecords(1).to("direct:item").end();
                 from("direct:streaming").split(body()).streaming().maxFailedRecords(1).to("direct:item").end();
+                from("direct:share").split(body()).shareUnitOfWork().maxFailedRecords(1).to("direct:item").end();
+
+                from("direct:nested").split(body()).maxFailedRecords(1)
+                        .setHeader("outerItem", simple("${body}"))
+                        .split(body()).to("direct:failing").end()
+                        .end();
+                from("direct:nestedBoth").split(body()).maxFailedRecords(1)
+                        .setHeader("outerItem", simple("${body}"))
+                        .split(body()).maxFailedRecords(1).to("direct:failing").end()
+                        .end();
 
                 from("direct:trycatch")
                         .doTry()
@@ -203,6 +246,7 @@ class SplitterThresholdStopKeepsOriginalMessageTest extends ContextTestSupport {
                         .setHeader("item", simple("${body}"))
                         .setProperty("itemProp", constant("x"))
                         .removeProperty("origProp")
+                        .setVariable("itemVar", constant("x"))
                         .setBody(constant("changed"))
                         .throwException(new IllegalStateException("boom"));
 
@@ -210,6 +254,7 @@ class SplitterThresholdStopKeepsOriginalMessageTest extends ContextTestSupport {
                         .setHeader("item", simple("${body}"))
                         .setProperty("itemProp", constant("x"))
                         .removeProperty("origProp")
+                        .setVariable("itemVar", constant("x"))
                         .filter(body().isEqualTo("FAIL"))
                         .throwException(new IllegalStateException("boom"));
             }
