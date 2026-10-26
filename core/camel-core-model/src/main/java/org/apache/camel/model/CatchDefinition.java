@@ -122,7 +122,8 @@ public class CatchDefinition extends OutputDefinition<CatchDefinition> {
     @Override
     public boolean acceptDebugger(Exchange exchange) {
         // only accept if not handled by a previous catch clause handled, and that there is an exception
-        boolean previous = exchange.getProperty(ExchangePropertyKey.EXCEPTION_HANDLED) != null;
+        // (a catch clause sets the property to true, the error handler can store the exception of a continued failure)
+        boolean previous = Boolean.TRUE.equals(exchange.getProperty(ExchangePropertyKey.EXCEPTION_HANDLED));
         final Exception e = exchange.getException();
         return !previous && e != null;
     }

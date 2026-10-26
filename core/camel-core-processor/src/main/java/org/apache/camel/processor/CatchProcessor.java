@@ -131,8 +131,10 @@ public class CatchProcessor extends BaseDelegateProcessorSupport
     @Override
     public boolean process(final Exchange exchange, final AsyncCallback callback) {
         final Exception e = exchange.getException();
-        // If a previous catch clause handled the exception, exit (before matching so this clause is not counted)
-        if (exchange.getProperty(ExchangePropertyKey.EXCEPTION_HANDLED) != null) {
+        // If a previous catch clause handled the exception, exit (before matching so this clause is not counted).
+        // A catch clause sets the property to true. The error handler stores the exception of a failure that an
+        // onException continued (for example in a route called from the doTry), which must not disable this clause.
+        if (Boolean.TRUE.equals(exchange.getProperty(ExchangePropertyKey.EXCEPTION_HANDLED))) {
             callback.done(true);
             return true;
         }
