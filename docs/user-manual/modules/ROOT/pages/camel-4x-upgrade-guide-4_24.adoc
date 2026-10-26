@@ -82,6 +82,18 @@ successful exchange opened the circuit again as long as the failures that opened
 the defaults (a window of 60 seconds, a half open check after 30 seconds) a success in the first 30 seconds after the
 half open check therefore kept the circuit open. A `halfOpenHandler` decides as before.
 
+=== camel-core - Split EIP keeps the original message when maxFailedRecords or errorThreshold stops it
+
+When the Split EIP stops because `maxFailedRecords` or `errorThreshold` is reached, the exchange now keeps its original
+input message, headers and exchange properties, and only gets the exception, as with `stopOnException`. Before, the
+message, headers and exchange properties of the split item that reached the threshold, as the steps inside the split
+had changed them, were copied onto the exchange.
+
+So a `doCatch` around the split, an `onException`, a dead letter channel or the caller of the route now receive the
+input that was split, instead of that one split item. A route that needs to know which items failed can read the
+`CamelSplitResult` exchange property, set as before: `SplitResult.getFailures()` has the index and the exception of
+each failed item.
+
 === camel-main - a failure to start is logged
 
 A Camel Main application that fails to start now logs why, at ERROR: `Error starting Camel: ...` with the stack trace,
