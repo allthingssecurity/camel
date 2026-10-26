@@ -283,3 +283,7 @@ YAML::
                   uri: http:service3
 ----
 ====
+
+The exception that failed the attempt and its causes are matched against these exceptions (the same as `onException`
+and `doCatch`). Suppressed exceptions are not matched, such as an exception thrown in a `doFinally` block, which is
+added as a suppressed exception to the exception from the `doTry` block.

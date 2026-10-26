@@ -82,6 +82,19 @@ successful exchange opened the circuit again as long as the failures that opened
 the defaults (a window of 60 seconds, a half open check after 30 seconds) a success in the first 30 seconds after the
 half open check therefore kept the circuit open. A `halfOpenHandler` decides as before.
 
+=== camel-core - the failover load balancer does not fail over on a suppressed exception
+
+The failover load balancer with a list of exceptions now matches only the exception that failed the attempt and its
+causes, as `onException` and `doCatch` do. Before, it also matched the suppressed exceptions of that exception. Since
+4.23, an exception thrown in a `doFinally` block is added as a suppressed exception to the exception from the `doTry`
+block, so a `doFinally` that threw one of the exceptions to fail over on made the load balancer fail over, and the
+exception that failed the attempt was lost when the next processor succeeded. Now the exchange fails with that
+exception.
+
+This also applies to a processor or component that adds a suppressed exception itself (such as Java's
+try-with-resources when closing a resource fails): the load balancer no longer fails over on the suppressed exception.
+To fail over in that case, add the type of the thrown exception to the list.
+
 === camel-main - a failure to start is logged
 
 A Camel Main application that fails to start now logs why, at ERROR: `Error starting Camel: ...` with the stack trace,
