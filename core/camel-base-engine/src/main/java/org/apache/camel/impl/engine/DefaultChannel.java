@@ -268,10 +268,19 @@ public class DefaultChannel extends CamelInternalProcessor implements Channel {
 
         // sets the delegate to our wrapped output
         output = target;
+
+        // the step hook is asked where the processor of this step is called: by the error handler of the step when it
+        // can (see postInitChannel), so a failure from the hook is handled by it, or else by this channel
+        stepHookNodeId = targetOutputDef.getId();
     }
 
     @Override
     public void postInitChannel() throws Exception {
+        if (errorHandler instanceof ErrorHandlerRedeliveryCustomizer erh && erh.useStepHook(stepHookNodeId)) {
+            // the error handler asks the step hook, also when it redelivers, so this channel does not
+            stepHookNodeId = null;
+        }
+
         // if jmx was enabled for the processor then either add as advice or wrap and change the processor
         // on the error handler. See more details in the class javadoc of InstrumentationProcessor
         if (instrumentationProcessor != null) {
