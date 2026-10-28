@@ -324,7 +324,8 @@ public class NatsConsumer extends DefaultConsumer {
                 NatsConsumer.this.setActive(true);
                 runPullFetchLoop(NatsConsumer.this.jetStreamSubscription, messageHandler, cc);
             } else {
-                NatsConsumer.this.dispatcher = this.connection.createDispatcher(messageHandler);
+                Dispatcher pushDispatcher = this.connection.createDispatcher(messageHandler);
+                NatsConsumer.this.dispatcher = pushDispatcher;
                 NatsConsumer.this.dispatcherHandler = messageHandler;
 
                 PushSubscribeOptions pushOptions = PushSubscribeOptions.builder()
@@ -342,12 +343,12 @@ public class NatsConsumer extends DefaultConsumer {
                 // more than its inactive threshold, server restart); a durable consumer is not created again
                 NatsJetStreamPushConsumerKeeper keeper = new NatsJetStreamPushConsumerKeeper(
                         NatsConsumer.this, this.connection, streamName, configuration.getTopic(), queueName,
-                        dispatcher, messageHandler, cc, NatsConsumer.this.executor,
+                        pushDispatcher, messageHandler, cc, NatsConsumer.this.executor,
                         sub -> NatsConsumer.this.jetStreamSubscription = sub);
                 NatsConsumer.this.jetStreamSubscription = this.connection.jetStream().subscribe(
                         NatsConsumer.this.getEndpoint().getConfiguration().getTopic(),
                         queueName,
-                        dispatcher,
+                        pushDispatcher,
                         keeper,
                         autoAck,
                         pushOptions);
@@ -357,8 +358,11 @@ public class NatsConsumer extends DefaultConsumer {
                         streamInfo != null && streamInfo.getStreamState() != null
                                 ? streamInfo.getStreamState().getLastSequence() : -1);
                 if (!NatsConsumer.this.isRunAllowed()) {
-                    // stopped while subscribing: doStop did not see the keeper
+                    // stopped while subscribing: doStop may have run before it could see the keeper, the subscription
+                    // or the dispatcher, so this run ends what it made (closing the dispatcher ends its subscription)
                     keeper.stop();
+                    messageHandler.closeWhenIdle(() -> closeDispatcher(this.connection, pushDispatcher));
+                    return;
                 }
 
                 NatsConsumer.this.setActive(true);

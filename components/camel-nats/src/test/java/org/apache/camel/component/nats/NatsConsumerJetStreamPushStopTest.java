@@ -18,7 +18,6 @@ package org.apache.camel.component.nats;
 
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -103,8 +102,17 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
         };
     }
 
+    /**
+     * The consumer subscribes on its executor after the route started: waits for that subscription, so that the test
+     * does not race with it (a message published before it is not delivered, DeliverPolicy.New).
+     */
+    private void awaitSubscribed() {
+        await().atMost(10, TimeUnit.SECONDS).until(() -> server.activeSubscriptions() == 1);
+    }
+
     @Test
     void stoppedRouteGetsNoMessagesAndRestartedRouteGetsEachMessageOnce() throws Exception {
+        awaitSubscribed();
         MockEndpoint mock = getMockEndpoint("mock:result");
         mock.expectedBodiesReceived("order-1");
         server.publish("order-1");
@@ -129,6 +137,7 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
 
     @Test
     void stoppingTheRouteDoesNotInterruptTheExchangeInFlight() throws Exception {
+        awaitSubscribed();
         server.publish("slow");
         assertTrue(slowEntered.await(10, TimeUnit.SECONDS), "the exchange is in flight");
 
@@ -155,6 +164,7 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
 
     @Test
     void eachRunOfTheConsumerClosesItsOwnDispatcher() throws Exception {
+        awaitSubscribed();
         server.publish("slow");
         assertTrue(slowEntered.await(10, TimeUnit.SECONDS), "the exchange is in flight");
 
@@ -178,8 +188,11 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
 
     @Test
     void stopWhileSubscribingIsNotReportedAsAnError() throws Exception {
+        // the first run subscribed, so that only the second run below meets the hook
+        awaitSubscribed();
         DefaultConsumer consumer = (DefaultConsumer) context.getRoute("orders").getConsumer();
         ServiceHelper.stopService(consumer);
+        assertEquals(0, server.activeSubscriptions(), "the stop ends the subscription of the first run");
         List<Throwable> reported = new CopyOnWriteArrayList<>();
         consumer.setExceptionHandler(new ExceptionHandler() {
             @Override
@@ -203,11 +216,41 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
         server.beforeSubscribe = () -> ServiceHelper.stopService(consumer);
         ServiceHelper.startService(consumer);
         await().atMost(10, TimeUnit.SECONDS).until(() -> server.refusedSubscribes() == 1);
+        awaitTaskOfTheStoppedRunDone();
 
         // the default exception handler would log it at WARN, but a stop is not an error
-        await().during(Duration.ofMillis(500)).atMost(5, TimeUnit.SECONDS)
-                .untilAsserted(() -> assertTrue(reported.isEmpty(), () -> "reported: " + reported));
+        assertTrue(reported.isEmpty(), () -> "reported: " + reported);
         assertEquals(0, server.activeSubscriptions(), "no subscription left once the consumer stopped");
+    }
+
+    @Test
+    void stopBeforeTheConsumerSubscribesLeavesNoSubscription() throws Exception {
+        awaitSubscribed();
+        Consumer consumer = context.getRoute("orders").getConsumer();
+        ServiceHelper.stopService(consumer);
+
+        // the consumer stops while its task creates the dispatcher: the stop sees no dispatcher and no subscription
+        // yet, so the task must end the subscription it makes afterwards (with a shared connection the stopped route
+        // would get the messages otherwise)
+        server.afterCreateDispatcher = () -> {
+            server.afterCreateDispatcher = null;
+            ServiceHelper.stopService(consumer);
+        };
+        ServiceHelper.startService(consumer);
+        await().atMost(10, TimeUnit.SECONDS).until(() -> server.subscribeCalls() == 2);
+        awaitTaskOfTheStoppedRunDone();
+
+        assertEquals(0, server.activeSubscriptions(), "no subscription left once the consumer stopped");
+        assertEquals(2, server.closedDispatchers(), "the dispatcher of each run is closed");
+    }
+
+    /**
+     * Waits until the task that made the last subscribe returned: the stop shut its executor down, so its thread ends
+     * once the task is done.
+     */
+    private void awaitTaskOfTheStoppedRunDone() {
+        Thread subscriber = server.lastSubscriber;
+        await().atMost(10, TimeUnit.SECONDS).until(() -> !subscriber.isAlive());
     }
 
     /**
@@ -226,7 +269,12 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
         final Set<Dispatcher> closed = Collections.newSetFromMap(new IdentityHashMap<>());
         // runs on the thread of the consumer, before a push subscribe reaches the server
         volatile Runnable beforeSubscribe;
+        // runs on the thread of the consumer, after it created a dispatcher and before it gets it
+        volatile Runnable afterCreateDispatcher;
         int refusedSubscribes;
+        // the push subscribes called, and the thread of the last one
+        int subscribeCalls;
+        volatile Thread lastSubscriber;
 
         final class FakeSubscription {
             final Dispatcher dispatcher;
@@ -250,6 +298,10 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
             return refusedSubscribes;
         }
 
+        synchronized int subscribeCalls() {
+            return subscribeCalls;
+        }
+
         synchronized int closedDispatchers() {
             return closed.size();
         }
@@ -262,6 +314,10 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
             JetStreamManagement jsm = proxy(JetStreamManagement.class, (name, args) -> null);
             JetStream js = proxy(JetStream.class, (name, args) -> {
                 if ("subscribe".equals(name) && args.length == 6 && args[5] instanceof PushSubscribeOptions o) {
+                    lastSubscriber = Thread.currentThread();
+                    synchronized (this) {
+                        subscribeCalls++;
+                    }
                     Runnable hook = beforeSubscribe;
                     if (hook != null) {
                         hook.run();
@@ -275,7 +331,14 @@ class NatsConsumerJetStreamPushStopTest extends CamelTestSupport {
                 case "getServerInfo" -> info;
                 case "jetStreamManagement" -> jsm;
                 case "jetStream" -> js;
-                case "createDispatcher" -> createDispatcher();
+                case "createDispatcher" -> {
+                    Dispatcher d = createDispatcher();
+                    Runnable hook = afterCreateDispatcher;
+                    if (hook != null) {
+                        hook.run();
+                    }
+                    yield d;
+                }
                 case "closeDispatcher" -> {
                     closeDispatcher((Dispatcher) args[0]);
                     yield null;

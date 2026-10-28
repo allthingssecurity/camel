@@ -131,6 +131,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         mock.assertIsSatisfied();
 
         // disconnected for longer than the inactive threshold: the server deletes the consumer
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-2");
         server.publish("order-3");
@@ -150,6 +151,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         server.publish("order-1");
         mock.assertIsSatisfied();
 
+        awaitKeeperListening();
         server.publish("fail-once");
         server.awaitDisconnected();
         server.publish("order-3");
@@ -195,6 +197,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         synchronized (server) {
             before = server.consumers.size();
         }
+        awaitKeeperListening();
         server.disconnect();
         server.reconnect();
 
@@ -212,11 +215,13 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
 
     @Test
     void removesItsConnectionListenerWhenTheRouteStopsWhileItSubscribes() throws Exception {
+        // the route of the test class subscribed (its keeper listens), so that only the new route meets the hook below
+        awaitKeeperListening();
         int added = server.listenersAdded.get();
-        // the route is stopped while the consumer makes its first subscription, so the stop does not see the keeper
-        // yet: the keeper must not stay registered on the (shared) connection
-        server.beforeSubscribe = () -> {
-            server.beforeSubscribe = null;
+        // the route is stopped once the consumer made its first subscription, before the consumer sets its keeper: the
+        // stop does not see the keeper, so the keeper must not stay registered on the (shared) connection
+        server.afterSubscribe = () -> {
+            server.afterSubscribe = null;
             String routeId = context.getRoutes().get(0).getId();
             Thread stopper = new Thread(() -> {
                 try {
@@ -237,21 +242,20 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         };
         consumeWith("exceptionHandler=#handler");
 
-        // the keeper of the new route registered its listener after the stop, or (when the stop closes the dispatcher,
-        // CAMEL-25847) jnats refused the subscribe on the closed dispatcher and no keeper was started
-        await().atMost(20, TimeUnit.SECONDS).until(() -> {
-            synchronized (server) {
-                return server.listenersAdded.get() == added + 1 || server.refusedSubscribes > 0;
-            }
-        });
+        // the keeper of the new route registered its listener after the stop, and removed it again
+        await().atMost(20, TimeUnit.SECONDS).until(() -> server.listenersAdded.get() > added);
         await().atMost(20, TimeUnit.SECONDS).untilAsserted(
                 () -> assertEquals(List.of(), server.listeners, "no keeper listens to the connection after the stop"));
+        assertEquals(added + 1, server.listenersAdded.get(), "one keeper registered, by the new route");
     }
 
     /**
      * Replaces the route of the test by one consuming with the given options.
      */
     private void consumeWith(String options) throws Exception {
+        // the route of the test class subscribes on the executor of its consumer: let it finish, so that it does not
+        // subscribe after it was stopped
+        awaitKeeperListening();
         String routeId = context.getRoutes().get(0).getId();
         context.getRouteController().stopRoute(routeId);
         context.removeRoute(routeId);
@@ -271,6 +275,14 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         });
     }
 
+    /**
+     * The consumer subscribes on its executor once the route started, and its keeper then listens to the connection: a
+     * reconnect before that would not reach the keeper.
+     */
+    private void awaitKeeperListening() {
+        await().atMost(10, TimeUnit.SECONDS).until(() -> server.listeners.size() == 1);
+    }
+
     @Test
     void doesNotCreateAGoneDurableConsumerAgain() throws Exception {
         consumeWith("durableName=orders");
@@ -285,6 +297,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         }
 
         // the durable consumer is deleted (as by an administrator) while the client is disconnected
+        awaitKeeperListening();
         server.disconnect();
         server.reconnect();
 
@@ -310,6 +323,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
             server.beforeSubscribe = null;
             throw new IllegalStateException("[SUB-90007] No matching streams for subject.");
         };
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-2");
         server.reconnect();
@@ -330,6 +344,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         server.publish("order-1");
         mock.assertIsSatisfied();
 
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-2");
         server.reconnect();
@@ -354,6 +369,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
             }
         });
 
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-2");
         server.reconnect();
@@ -380,6 +396,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         mock.assertIsSatisfied();
 
         // a memory stream after a server restart: the consumer is gone, and order-3 is sequence 1 of the new stream
+        awaitKeeperListening();
         server.disconnect();
         server.createStreamAgain();
         server.publish("order-3");
@@ -405,6 +422,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         server.publish("order-2");
         mock.assertIsSatisfied();
 
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-3");
         server.reconnect();
@@ -438,6 +456,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
             }
         });
 
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-4");
         server.reconnect();
@@ -462,6 +481,7 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         mock.assertIsSatisfied();
 
         // a memory stream lost on a server restart, and created again only later
+        awaitKeeperListening();
         server.disconnect();
         server.deleteStream();
         server.reconnect();
@@ -484,10 +504,8 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
     @Test
     void deliverPolicyNewWithNothingDeliveredResumesAfterTheLastMessageAtTheSubscribe() throws Exception {
         consumeWith("consumerConfiguration=#deliverNew");
-        // the route subscribes on the executor of the consumer, and then listens to the connection
-        await().atMost(10, TimeUnit.SECONDS).until(() -> !server.listeners.isEmpty());
-
         // nothing was delivered when the consumer is deleted: the messages published meanwhile must not be skipped
+        awaitKeeperListening();
         server.disconnect();
         server.publish("order-1");
         server.reconnect();
@@ -537,6 +555,8 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
         int consumersCreated;
         // runs on the thread that subscribes, before the subscription is made
         volatile Runnable beforeSubscribe;
+        // runs on the thread that subscribes, once the subscription is made and before the subscriber gets it
+        volatile Runnable afterSubscribe;
         Connection connection;
 
         final class FakeConsumer {
@@ -629,7 +649,12 @@ class NatsConsumerPushConsumerDeletedTest extends CamelTestSupport {
                             throw new IllegalStateException("Dispatcher is closed");
                         }
                     }
-                    return subscribe(o.getConsumerConfiguration(), (MessageHandler) args[3]);
+                    JetStreamSubscription sub = subscribe(o.getConsumerConfiguration(), (MessageHandler) args[3]);
+                    Runnable after = afterSubscribe;
+                    if (after != null) {
+                        after.run();
+                    }
+                    return sub;
                 }
                 throw new UnsupportedOperationException(name);
             });
