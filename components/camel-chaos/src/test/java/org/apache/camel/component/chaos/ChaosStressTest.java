@@ -61,6 +61,8 @@ class ChaosStressTest extends ChaosTestSupport {
     @Test
     @Timeout(value = 120, unit = TimeUnit.SECONDS)
     void countsAddUpWhileRulesChange() throws Exception {
+        // a rule that never fires keeps the routes counted while the other rule comes and goes
+        chaos().addRule("endpoint=nothing:* error");
         AtomicLong sent = new AtomicLong();
         AtomicLong failed = new AtomicLong();
         AtomicLong unexpected = new AtomicLong();
@@ -114,6 +116,9 @@ class ChaosStressTest extends ChaosTestSupport {
         for (Object o : rules) {
             JsonObject rule = (JsonObject) o;
             long fired = ((JsonObject) rule.get("fired")).getLong("send");
+            if (rule.getString("rule").startsWith("endpoint=nothing")) {
+                continue;
+            }
             if (rule.getString("rule").endsWith("error")) {
                 errorsFired += fired;
             } else {
@@ -130,6 +135,12 @@ class ChaosStressTest extends ChaosTestSupport {
         assertThat(matches).isEqualTo(errorsFired + dropsFired);
         assertThat(errorsFired).isPositive();
         assertThat(dropsFired).isPositive();
+        // the routes counted each exchange once: start failed for each error and completed otherwise, and sink
+        // completed for each delivered exchange
+        assertThat(routeCount("start", "failed")).isEqualTo(failed.get());
+        assertThat(routeCount("start", "completed")).isEqualTo(sent.get() - failed.get());
+        assertThat(routeCount("sink", "completed")).isEqualTo(delivered.get());
+        assertThat(routeCount("sink", "failed")).isZero();
     }
 
     /** Waits (spinning, no sleep) until the senders sent some more, or stopped. */

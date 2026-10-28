@@ -95,6 +95,11 @@ class ChaosStepAndErrorHandlerTest extends ChaosTestSupport {
         MockEndpoint.assertIsSatisfied(context);
         // the first try and two redeliveries each ask the hook
         assertThat(fired(id, "send")).isEqualTo(3);
+        assertThat(routeReport("redeliver").getLong("redeliveries")).isEqualTo(2);
+        assertThat(routeReport("redeliver").getLong("handled")).isEqualTo(1);
+        // the dead letter channel handled it, so the exchange completed
+        assertThat(routeReport("redeliver").getLong("completed")).isEqualTo(1);
+        assertThat(routeReport("redeliver").getLong("failed")).isZero();
     }
 
     @Test
@@ -107,6 +112,7 @@ class ChaosStepAndErrorHandlerTest extends ChaosTestSupport {
 
         MockEndpoint.assertIsSatisfied(context);
         assertThat(fired(id, "send")).isEqualTo(1);
+        assertThat(routeReport("redeliver").getLong("redeliveries")).isEqualTo(1);
     }
 
     @Test
