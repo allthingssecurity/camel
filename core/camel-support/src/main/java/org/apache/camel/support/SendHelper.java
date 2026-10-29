@@ -199,7 +199,7 @@ public final class SendHelper {
             }
 
             final Exception exception = exchange.getException();
-            if (exception != null && exception != existing || delay == SendHook.SKIP) {
+            if ((exception != null && exception != existing) || delay == SendHook.SKIP) {
                 // the hook stopped (or skipped) the send, so the producer is not called
                 return completeWithoutProducer();
             }
