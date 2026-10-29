@@ -157,6 +157,19 @@ graphql, kubernetes-custom-resources and typesafe-ai) now have type converters t
 or `InputStream`, so such a body sent to http or a file failed. A `JsonObject` or `JsonArray` that holds a value that
 is not JSON, such as a POJO, converts as before.
 
+=== camel-core - a route called from a doTry uses the error handler of its EIPs
+
+A route that a step of a `doTry` calls (with `direct`, `seda`, `enrich` and so on) now uses the error handler per
+output of its routing slip, dynamic router, multicast and recipient list EIPs, as it does when it is called from
+outside a `doTry`. Before, these EIPs left out that error handler while the caller was in its `doTry`: a routing slip
+redelivered the whole slip (so an endpoint that had already succeeded got the message again), a multicast or
+recipient list did not redeliver the failed output, and a dynamic router that counts its calls could lose the
+failure. The same applies to a route called from the steps of a circuit breaker. A redelivery now starts at the
+failed output, so such a route can make more delivery attempts than before.
+
+To keep the old behaviour for an EIP of the called route, put it in a `doTry` block of that route, or turn off the
+error handler of the called route with `errorHandler(noErrorHandler())`.
+
 === camel-util - FilterIterator.remove after hasNext throws IllegalStateException
 
 `FilterIterator.hasNext()` looks ahead in the iterator it wraps, so a `remove()` after `next()` and then `hasNext()`
