@@ -20,7 +20,6 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.locks.Lock;
@@ -232,14 +231,15 @@ public class DefaultUnitOfWork implements UnitOfWork {
 
     @Override
     public void handoverSynchronization(Exchange target, Predicate<Synchronization> filter) {
-        if (synchronizations == null || synchronizations.isEmpty()) {
+        // the parts of a parallel Split, Multicast or Recipient List with shareUnitOfWork use this unit of work at the
+        // same time, so work on a copy, and take each synchronization out under the lock before handing it over, so it
+        // is handed over only once (and the target is not called while holding the lock)
+        final List<Synchronization> copy = copySynchronizations();
+        if (copy == null) {
             return;
         }
 
-        Iterator<Synchronization> it = synchronizations.iterator();
-        while (it.hasNext()) {
-            Synchronization synchronization = it.next();
-
+        for (Synchronization synchronization : copy) {
             boolean handover = true;
             SynchronizationVetoable veto = null;
             if (synchronization instanceof SynchronizationVetoable v) {
@@ -248,17 +248,55 @@ public class DefaultUnitOfWork implements UnitOfWork {
             }
 
             if (handover && (filter == null || filter.test(synchronization))) {
-                log.trace("Handover synchronization {} to: {}", synchronization, target);
-                target.getExchangeExtension().addOnCompletion(synchronization);
-                // Allow the synchronization to do housekeeping before transfer
-                if (veto != null) {
-                    veto.beforeHandover(target);
+                // remove it as its handed over (unless another thread has already handed it over)
+                if (takeSynchronization(synchronization)) {
+                    log.trace("Handover synchronization {} to: {}", synchronization, target);
+                    target.getExchangeExtension().addOnCompletion(synchronization);
+                    // Allow the synchronization to do housekeeping before transfer
+                    if (veto != null) {
+                        veto.beforeHandover(target);
+                    }
                 }
-                // remove it if its handed over
-                it.remove();
             } else {
                 log.trace("Handover not allow for synchronization {}", synchronization);
             }
+        }
+    }
+
+    /**
+     * A copy of the synchronizations, or <tt>null</tt> if there are none.
+     */
+    private List<Synchronization> copySynchronizations() {
+        lock.lock();
+        try {
+            if (synchronizations == null || synchronizations.isEmpty()) {
+                return null;
+            }
+            return new ArrayList<>(synchronizations);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Removes the given synchronization (the same instance).
+     *
+     * @return <tt>true</tt> if it was removed, <tt>false</tt> if it was no longer there
+     */
+    private boolean takeSynchronization(Synchronization synchronization) {
+        lock.lock();
+        try {
+            if (synchronizations != null) {
+                for (int i = 0; i < synchronizations.size(); i++) {
+                    if (synchronizations.get(i) == synchronization) {
+                        synchronizations.remove(i);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -268,8 +306,9 @@ public class DefaultUnitOfWork implements UnitOfWork {
             log.trace("UnitOfWork done for ExchangeId: {}", exchange.getExchangeId());
         }
 
-        // at first done the synchronizations
-        UnitOfWorkHelper.doneSynchronizations(exchange, synchronizations);
+        // at first done the synchronizations (on a copy, as other threads may add or hand over synchronizations,
+        // such as the parts of a parallel Split with shareUnitOfWork that are still running after a timeout)
+        UnitOfWorkHelper.doneSynchronizations(exchange, copySynchronizations());
 
         // unregister from inflight registry, before signalling we are done
         inflightRepository.remove(exchange);
