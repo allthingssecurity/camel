@@ -61,6 +61,8 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
 
         assertNull(out.getException(), "the split must not fail");
         assertTrue(seda.matches(10, TimeUnit.SECONDS));
+        // a part that sends to seda hands over the on completions of the shared unit of work to its copy (as on main
+        // without parallel processing, see testSequentialSplit)
         assertEquals(List.of("seda"), consumer.completed, "the consumer on completion runs once, with the seda copy");
         assertEquals(List.of(), consumer.failed);
         assertEquals(List.of("handoverAndAdd"), part.completed,
@@ -109,7 +111,7 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
                         .when(body().isEqualTo("A")).to("seda:a")
                         .otherwise().process(e -> {
                             // another part adds an on completion while part A hands over
-                            await(handoverStarted);
+                            awaitOtherPart(handoverStarted);
                             e.getExchangeExtension().addOnCompletion(part);
                             partAdded.countDown();
                         })
@@ -136,7 +138,7 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
         };
     }
 
-    private static void await(CountDownLatch latch) {
+    private static void awaitOtherPart(CountDownLatch latch) {
         try {
             if (!latch.await(10, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("Timeout waiting for the other part");
@@ -165,7 +167,8 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
         @Override
         public boolean allowHandover() {
             // the handover asks the on completion whether it may be handed over, so it can hold the handover
-            // at that point until the other part has done its work
+            // at that point until the other part has done its work (the handover calls this without holding the
+            // lock of the unit of work, so the other part can add or hand over meanwhile)
             if (this == consumer && pausedHandovers.getAndDecrement() > 0) {
                 if (barrier) {
                     try {
@@ -175,7 +178,7 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
                     }
                 } else {
                     handoverStarted.countDown();
-                    await(partAdded);
+                    awaitOtherPart(partAdded);
                 }
             }
             return true;

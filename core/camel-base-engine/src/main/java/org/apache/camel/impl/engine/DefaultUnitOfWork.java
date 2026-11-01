@@ -264,9 +264,14 @@ public class DefaultUnitOfWork implements UnitOfWork {
     }
 
     /**
-     * A copy of the synchronizations, or <tt>null</tt> if there are none.
+     * A copy of the synchronizations, or {@code null} if there are none.
      */
     private List<Synchronization> copySynchronizations() {
+        // no lock when there are no synchronizations (checked again under the lock)
+        final List<Synchronization> list = synchronizations;
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
         lock.lock();
         try {
             if (synchronizations == null || synchronizations.isEmpty()) {
@@ -279,9 +284,10 @@ public class DefaultUnitOfWork implements UnitOfWork {
     }
 
     /**
-     * Removes the given synchronization (the same instance).
+     * Takes the given synchronization (the same instance) out of the list.
      *
-     * @return <tt>true</tt> if it was removed, <tt>false</tt> if it was no longer there
+     * @return {@code true} if this call removed it, {@code false} if it was not there (such as another thread has
+     *         already handed it over)
      */
     private boolean takeSynchronization(Synchronization synchronization) {
         lock.lock();
@@ -360,12 +366,9 @@ public class DefaultUnitOfWork implements UnitOfWork {
             log.trace("UnitOfWork beforeRoute: {} for ExchangeId: {} with {}", route.getId(), exchange.getExchangeId(),
                     exchange);
         }
-        if (synchronizations != null && !synchronizations.isEmpty()) {
-            // on a copy taken under the lock, as other threads may add or hand over synchronizations
-            List<Synchronization> copy = copySynchronizations();
-            if (copy != null) {
-                UnitOfWorkHelper.beforeRouteSynchronizations(route, exchange, copy, log);
-            }
+        final List<Synchronization> copy = copySynchronizations();
+        if (copy != null) {
+            UnitOfWorkHelper.beforeRouteSynchronizations(route, exchange, copy, log);
         }
     }
 
@@ -375,12 +378,9 @@ public class DefaultUnitOfWork implements UnitOfWork {
             log.trace("UnitOfWork afterRoute: {} for ExchangeId: {} with {}", route.getId(), exchange.getExchangeId(),
                     exchange);
         }
-        if (synchronizations != null && !synchronizations.isEmpty()) {
-            // on a copy taken under the lock, as other threads may add or hand over synchronizations
-            List<Synchronization> copy = copySynchronizations();
-            if (copy != null) {
-                UnitOfWorkHelper.afterRouteSynchronizations(route, exchange, copy, log);
-            }
+        final List<Synchronization> copy = copySynchronizations();
+        if (copy != null) {
+            UnitOfWorkHelper.afterRouteSynchronizations(route, exchange, copy, log);
         }
     }
 
