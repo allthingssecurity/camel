@@ -28,11 +28,15 @@ import org.apache.camel.Processor;
 import org.apache.camel.spi.InterceptStrategy;
 import org.apache.camel.support.AsyncCallbackToCompletableFutureAdapter;
 import org.apache.camel.support.processor.DelegateAsyncProcessor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * TraceProcessorsInterceptStrategy is used to wrap each processor calls and generate a Span for each process execution.
  */
 public class TraceProcessorsInterceptStrategy implements InterceptStrategy {
+
+    private static final Logger LOG = LoggerFactory.getLogger(TraceProcessorsInterceptStrategy.class);
 
     private Tracer tracer;
 
@@ -83,17 +87,17 @@ public class TraceProcessorsInterceptStrategy implements InterceptStrategy {
                 }
             }
             return processor.process(exchange, doneSync -> {
-                try {
-                    callback.done(doneSync);
-                } finally {
-                    if (trace) {
-                        try {
-                            tracer.endProcessorSpan(exchange, processorName);
-                        } catch (Exception e) {
-                            exchange.setException(e);
-                        }
+                if (trace) {
+                    // end the span before the route continues: when the processor completed on another thread (such as
+                    // an asynchronous delay), callback.done runs the next steps of the route inside this call, and they
+                    // must not get this span as their parent (the spans of an exchange are kept as a stack)
+                    try {
+                        tracer.endProcessorSpan(exchange, processorName);
+                    } catch (Exception e) {
+                        LOG.warn("Tracing: Failed to capture tracing data. This exception is ignored.", e);
                     }
                 }
+                callback.done(doneSync);
             });
         }
 

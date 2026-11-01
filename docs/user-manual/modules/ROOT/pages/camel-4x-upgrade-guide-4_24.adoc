@@ -452,6 +452,17 @@ closed that client for every other endpoint.
 Camel now closes only the clients it created. A client set with `amazonKinesisClient` or `amazonKinesisAsyncClient`, on
 the component or on an endpoint, is no longer closed when Camel stops: close it yourself when you no longer need it.
 
+=== camel-telemetry - the span of an asynchronous step ends before the next step
+
+With `camel-opentelemetry2`, `camel-micrometer-observability` and `camel-telemetry-dev`, the span of a step that
+completes on another thread (such as `delay`, which is asynchronous by default, or `threads`) now ends when the step is
+done, and the steps after it are children of the route span. Before, the following steps of the route were children of
+that span and the span lasted until the end of the route; around a called route (`to("direct:...")`) whose route has
+such a step, the spans of the call and of the called route were also ended by the wrong events. Traces of these routes
+therefore have a different tree, and the span of the asynchronous step is shorter. There is no option to keep the old
+tree, as it did not follow the tracing design; a dashboard that read the time of the rest of the route from such a span
+can use the route span instead.
+
 === camel-oaipmh - the CamelOaimphOnlyFirst and CamelOaimphIgnoreSSLWarnings headers apply to their message only
 
 The `CamelOaimphOnlyFirst` and `CamelOaimphIgnoreSSLWarnings` headers now apply only to the message that has them.
