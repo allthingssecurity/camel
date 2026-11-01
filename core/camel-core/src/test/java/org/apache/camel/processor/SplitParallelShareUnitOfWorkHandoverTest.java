@@ -16,6 +16,8 @@
  */
 package org.apache.camel.processor;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -27,6 +29,7 @@ import org.apache.camel.builder.NotifyBuilder;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.support.SynchronizationAdapter;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -37,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * over the on completions (such as sending to a seda endpoint) must not fail, or hand over an on completion twice, when
  * another part adds or hands over on completions at the same time.
  */
+@Timeout(60)
 public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport {
 
     private final CountingSynchronization consumer = new CountingSynchronization();
@@ -57,10 +61,11 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
 
         assertNull(out.getException(), "the split must not fail");
         assertTrue(seda.matches(10, TimeUnit.SECONDS));
-        assertEquals(1, consumer.completed.get(), "the consumer on completion runs once, with the seda copy");
-        assertEquals(0, consumer.failed.get());
-        assertEquals(1, part.completed.get(), "the on completion of the part runs once, with the split exchange");
-        assertEquals(0, part.failed.get());
+        assertEquals(List.of("seda"), consumer.completed, "the consumer on completion runs once, with the seda copy");
+        assertEquals(List.of(), consumer.failed);
+        assertEquals(List.of("handoverAndAdd"), part.completed,
+                "the on completion of the part runs once, with the split exchange");
+        assertEquals(List.of(), part.failed);
     }
 
     @Test
@@ -73,9 +78,9 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
 
         assertNull(out.getException(), "the split must not fail");
         assertTrue(seda.matches(10, TimeUnit.SECONDS));
-        assertEquals(1, consumer.completed.get() + consumer.failed.get(),
+        assertEquals(List.of("seda"), consumer.completed,
                 "the consumer on completion is handed over to one seda copy only, and runs once");
-        assertEquals(0, consumer.failed.get());
+        assertEquals(List.of(), consumer.failed);
     }
 
     @Test
@@ -87,8 +92,8 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
 
         assertNull(out.getException());
         assertTrue(seda.matches(10, TimeUnit.SECONDS));
-        assertEquals(1, consumer.completed.get());
-        assertEquals(0, consumer.failed.get());
+        assertEquals(List.of("seda"), consumer.completed);
+        assertEquals(List.of(), consumer.failed);
     }
 
     @Override
@@ -97,14 +102,14 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
             @Override
             public void configure() {
                 // the consumer on completion is added before the split (such as by a file or JMS consumer)
-                from("direct:handoverAndAdd")
+                from("direct:handoverAndAdd").routeId("handoverAndAdd")
                         .process(e -> e.getExchangeExtension().addOnCompletion(consumer))
                         .split(body().tokenize(",")).parallelProcessing().shareUnitOfWork()
                         .choice()
                         .when(body().isEqualTo("A")).to("seda:a")
                         .otherwise().process(e -> {
                             // another part adds an on completion while part A hands over
-                            assertTrue(handoverStarted.await(10, TimeUnit.SECONDS));
+                            await(handoverStarted);
                             e.getExchangeExtension().addOnCompletion(part);
                             partAdded.countDown();
                         })
@@ -126,23 +131,35 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
                         .end()
                         .to("mock:result");
 
-                from("seda:a").to("mock:a");
+                from("seda:a").routeId("seda").to("mock:a");
             }
         };
     }
 
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timeout waiting for the other part");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+    }
+
     private final class CountingSynchronization extends SynchronizationAdapter {
-        private final AtomicInteger completed = new AtomicInteger();
-        private final AtomicInteger failed = new AtomicInteger();
+        // the routes of the exchanges it ran with
+        private final List<String> completed = new CopyOnWriteArrayList<>();
+        private final List<String> failed = new CopyOnWriteArrayList<>();
 
         @Override
         public void onComplete(Exchange exchange) {
-            completed.incrementAndGet();
+            completed.add(exchange.getFromRouteId());
         }
 
         @Override
         public void onFailure(Exchange exchange) {
-            failed.incrementAndGet();
+            failed.add(exchange.getFromRouteId());
         }
 
         @Override
@@ -150,15 +167,15 @@ public class SplitParallelShareUnitOfWorkHandoverTest extends ContextTestSupport
             // the handover asks the on completion whether it may be handed over, so it can hold the handover
             // at that point until the other part has done its work
             if (this == consumer && pausedHandovers.getAndDecrement() > 0) {
-                try {
-                    if (barrier) {
+                if (barrier) {
+                    try {
                         bothInHandover.await(10, TimeUnit.SECONDS);
-                    } else {
-                        handoverStarted.countDown();
-                        assertTrue(partAdded.await(10, TimeUnit.SECONDS));
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
                     }
-                } catch (Exception e) {
-                    throw new IllegalStateException(e);
+                } else {
+                    handoverStarted.countDown();
+                    await(partAdded);
                 }
             }
             return true;

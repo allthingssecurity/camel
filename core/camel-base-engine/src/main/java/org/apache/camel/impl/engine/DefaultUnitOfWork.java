@@ -248,7 +248,7 @@ public class DefaultUnitOfWork implements UnitOfWork {
             }
 
             if (handover && (filter == null || filter.test(synchronization))) {
-                // remove it as its handed over (unless another thread has already handed it over)
+                // remove it as it is handed over (unless another thread has already handed it over)
                 if (takeSynchronization(synchronization)) {
                     log.trace("Handover synchronization {} to: {}", synchronization, target);
                     target.getExchangeExtension().addOnCompletion(synchronization);
@@ -306,8 +306,8 @@ public class DefaultUnitOfWork implements UnitOfWork {
             log.trace("UnitOfWork done for ExchangeId: {}", exchange.getExchangeId());
         }
 
-        // at first done the synchronizations (on a copy, as other threads may add or hand over synchronizations,
-        // such as the parts of a parallel Split with shareUnitOfWork that are still running after a timeout)
+        // at first done the synchronizations (on a copy taken under the lock, as other threads may add or hand over
+        // synchronizations)
         UnitOfWorkHelper.doneSynchronizations(exchange, copySynchronizations());
 
         // unregister from inflight registry, before signalling we are done
@@ -361,7 +361,11 @@ public class DefaultUnitOfWork implements UnitOfWork {
                     exchange);
         }
         if (synchronizations != null && !synchronizations.isEmpty()) {
-            UnitOfWorkHelper.beforeRouteSynchronizations(route, exchange, synchronizations, log);
+            // on a copy taken under the lock, as other threads may add or hand over synchronizations
+            List<Synchronization> copy = copySynchronizations();
+            if (copy != null) {
+                UnitOfWorkHelper.beforeRouteSynchronizations(route, exchange, copy, log);
+            }
         }
     }
 
@@ -372,7 +376,11 @@ public class DefaultUnitOfWork implements UnitOfWork {
                     exchange);
         }
         if (synchronizations != null && !synchronizations.isEmpty()) {
-            UnitOfWorkHelper.afterRouteSynchronizations(route, exchange, synchronizations, log);
+            // on a copy taken under the lock, as other threads may add or hand over synchronizations
+            List<Synchronization> copy = copySynchronizations();
+            if (copy != null) {
+                UnitOfWorkHelper.afterRouteSynchronizations(route, exchange, copy, log);
+            }
         }
     }
 
