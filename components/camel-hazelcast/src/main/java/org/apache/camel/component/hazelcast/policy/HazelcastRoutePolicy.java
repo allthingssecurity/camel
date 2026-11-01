@@ -22,6 +22,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
@@ -43,6 +45,9 @@ public class HazelcastRoutePolicy extends RoutePolicySupport implements CamelCon
     private final boolean managedInstance;
     private final AtomicBoolean leader;
     private final Set<Route> suspendedRoutes;
+    // guards the leader flag and suspendedRoutes, so a leadership taken while a route starts is not missed.
+    // Not the lifecycle lock, as stop() holds that one while it waits for the leadership thread.
+    private final Lock leadershipLock = new ReentrantLock();
 
     private Route route;
     private CamelContext camelContext;
@@ -98,28 +103,33 @@ public class HazelcastRoutePolicy extends RoutePolicySupport implements CamelCon
 
     @Override
     public void onStart(Route route) {
-        if (!leader.get() && shouldStopConsumer) {
-            stopConsumer(route);
+        leadershipLock.lock();
+        try {
+            if (!leader.get() && shouldStopConsumer) {
+                stopConsumer(route);
+            }
+        } finally {
+            leadershipLock.unlock();
         }
     }
 
     @Override
     public void onStop(Route route) {
-        lock.lock();
+        leadershipLock.lock();
         try {
             suspendedRoutes.remove(route);
         } finally {
-            lock.unlock();
+            leadershipLock.unlock();
         }
     }
 
     @Override
     public void onSuspend(Route route) {
-        lock.lock();
+        leadershipLock.lock();
         try {
             suspendedRoutes.remove(route);
         } finally {
-            lock.unlock();
+            leadershipLock.unlock();
         }
     }
 
@@ -158,25 +168,28 @@ public class HazelcastRoutePolicy extends RoutePolicySupport implements CamelCon
     // *************************************************************************
 
     protected void setLeader(boolean isLeader) {
-        if (isLeader && leader.compareAndSet(false, isLeader)) {
-            LOGGER.info("Leadership taken (map={}, key={}, val={})",
-                    lockMapName,
-                    lockKey,
-                    lockValue);
+        leadershipLock.lock();
+        try {
+            if (isLeader && leader.compareAndSet(false, true)) {
+                LOGGER.info("Leadership taken (map={}, key={}, val={})",
+                        lockMapName,
+                        lockKey,
+                        lockValue);
 
-            startAllStoppedConsumers();
-        } else {
-            if (!leader.getAndSet(isLeader) && isLeader) {
-                LOGGER.info("Leadership lost (map={}, key={} val={})",
+                startAllStoppedConsumers();
+            } else if (!isLeader && leader.compareAndSet(true, false)) {
+                LOGGER.info("Leadership lost (map={}, key={}, val={})",
                         lockMapName,
                         lockKey,
                         lockValue);
             }
+        } finally {
+            leadershipLock.unlock();
         }
     }
 
+    // under the leadership lock
     private void stopConsumer(Route route) {
-        lock.lock();
         try {
             if (!suspendedRoutes.contains(route)) {
                 LOGGER.debug("Stopping consumer for {} ({})", route.getId(), route.getConsumer());
@@ -185,13 +198,11 @@ public class HazelcastRoutePolicy extends RoutePolicySupport implements CamelCon
             }
         } catch (Exception e) {
             handleException(e);
-        } finally {
-            lock.unlock();
         }
     }
 
+    // under the leadership lock
     private void startAllStoppedConsumers() {
-        lock.lock();
         try {
             for (Route route : suspendedRoutes) {
                 LOGGER.debug("Starting consumer for {} ({})", route.getId(), route.getConsumer());
@@ -201,8 +212,6 @@ public class HazelcastRoutePolicy extends RoutePolicySupport implements CamelCon
             suspendedRoutes.clear();
         } catch (Exception e) {
             handleException(e);
-        } finally {
-            lock.unlock();
         }
     }
 
