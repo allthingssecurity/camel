@@ -272,6 +272,15 @@ An exception thrown by the `isReadyToBeClosed` method of a `halfOpenHandler` is 
 the policy), and the circuit is kept open and checked again after `halfOpenAfter`; before, the timer thread died and the
 circuit stayed open.
 
+=== camel-core - Routing Slip and Dynamic Router fire the sent event of a step before the next step
+
+When a step of a `routingSlip` or `dynamicRouter` completes asynchronously (as a step that calls a `direct` route
+usually does), the `ExchangeSentEvent` of that step is now fired when the step is done, before the next step is sent,
+as for a step that completes synchronously and as with `recipientList`. Before, the sent events of such steps were fired
+in reverse order after the last step, so their time taken included all the following steps, and the event carried the
+message after the last step. Event notifiers and metrics based on the sent events (and tracing with `camel-telemetry`)
+now see one sent event per step, with the time of that step and its message.
+
 === camel-main - a failure to start is logged
 
 A Camel Main application that fails to start now logs why, at ERROR: `Error starting Camel: ...` with the stack trace,
