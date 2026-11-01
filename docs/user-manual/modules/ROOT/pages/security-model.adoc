@@ -177,10 +177,10 @@ LLM. It keeps the same contract in a terminal:
   `camel ask` makes without a screen of the integration in front of the
   developer: stopping, killing or restarting the integration or its routes,
   running an integration, browsing an endpoint the integration does not have,
-  writing a heap dump, and a `camel` command that changes something, such as
-  `camel cmd chaos-add`, which turns on faults in the integration. The
-  commands that only read, such as `camel get` and `camel ps`, run without
-  asking.
+  writing a heap dump, adding or changing a chaos rule, and a `camel` command
+  that changes something, such as `camel cmd chaos-add`, which turns on faults
+  in the integration. The commands that only read, such as `camel get` and
+  `camel ps`, run without asking.
 * Without a terminal to ask on, such a call does not run, unless the
   developer passed `--yes`.
 
@@ -1838,7 +1838,9 @@ explicit-opt-in entry under _Out of scope_.
 | The rules fail, delay, drop and corrupt messages on purpose, and the `exception=` of a rule names any public
   `Throwable` class on the classpath, whose constructor runs when the fault fires. Chaos is a development tool: it is
   switched on only with profile `dev` or `camel.chaos.enabled=true`, never with profile `prod`, and rules come only
-  from the developer (`camel.chaos.rules`, Java and the CLI connector; the `chaos` developer console only reads).
+  from the developer (`camel.chaos.rules`, Java and the CLI connector, which the chaos tools of `camel ask` and of the
+  camel-jbang MCP server use, as do the development MCP tools of `camel run --mcp`; the `chaos` developer console only
+  reads).
   `camel.chaos.rules` is marked `insecure:dev`.
 |===
 
