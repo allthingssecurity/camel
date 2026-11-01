@@ -374,6 +374,18 @@ as `camel run` already did. Before, the failure left `main()` and only the JVM p
 The JVM no longer prints that same failure a second time. When the application logs nothing at ERROR (such as without
 a logging implementation), the JVM prints it as before.
 
+=== camel-support - API components use one thread pool per CamelContext
+
+The producers of the API components (AS2, Box, Braintree, DHIS2, FHIR, Google Calendar, Google Drive, Google Mail,
+Google Sheets, Twilio and Zendesk) call the API on a thread pool. There is now one such pool per component type in each
+CamelContext, created and shut down by that CamelContext. Before, one pool per component type was shared by all the
+CamelContexts of the JVM and belonged to the CamelContext that used it first: when that CamelContext stopped, it
+interrupted the calls of the other CamelContexts, and their later calls were dropped and never completed.
+
+An application with several CamelContexts that use the same API component now has one pool in each of them. Their size
+is set, as before, by the thread pool profile of the component (such as `CamelGoogleDrive`) or by the default thread
+pool profile of each CamelContext.
+
 === camel-report-maven-plugin:validate / configuration-validate
 
 The catalog now accepts all `camel.*` groups defined in `camel-main-configuration-metadata.json`
