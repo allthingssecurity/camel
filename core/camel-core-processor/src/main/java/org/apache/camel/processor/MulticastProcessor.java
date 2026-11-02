@@ -952,8 +952,15 @@ public class MulticastProcessor extends BaseProcessorSupport
 
         AggregationStrategy strategy = getAggregationStrategy(subExchange);
         // invoke the on completion callback
+        Exception completionFailure = null;
         if (strategy != null) {
-            strategy.onCompletion(subExchange, original);
+            try {
+                strategy.onCompletion(subExchange, original);
+            } catch (Exception e) {
+                // the multicast is done already, so this is called only once: do the done work below and call the
+                // callback, with the exchange failed, as otherwise nothing would call it and the exchange would hang
+                completionFailure = e;
+            }
         }
 
         // cleanup any per exchange aggregation strategy
@@ -986,6 +993,17 @@ public class MulticastProcessor extends BaseProcessorSupport
                     original.setProperty(ExchangePropertyKey.CORRELATION_ID, correlationId);
                 }
             }
+        }
+        if (completionFailure != null) {
+            // fail the exchange with it (an exchange that has failed already, such as with stopOnException, keeps its
+            // exception, which tells where it failed)
+            Exception failure = original.getException();
+            if (failure == null) {
+                original.setException(completionFailure);
+            } else if (failure != completionFailure) {
+                failure.addSuppressed(completionFailure);
+            }
+            exception = true;
         }
 
         if (processorExchangeFactory != null && pairs instanceof Collection) {
