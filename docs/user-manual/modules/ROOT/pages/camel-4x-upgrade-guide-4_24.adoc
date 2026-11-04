@@ -6305,3 +6305,12 @@ created for it), set the `transactionStrategy` option explicitly.
 The return type of the protected method `JpaEndpoint.createTransactionStrategy()` is now `TransactionStrategy` instead
 of `DefaultTransactionStrategy`. A subclass that overrides it must be recompiled: compiled against the old return type,
 its method is no longer called.
+
+=== camel-jgroups - a channel given by the user is not closed when Camel stops
+
+When the CamelContext stops, the `jgroups` component no longer closes the channel of the component (its `channel`
+option) and the channels given to an endpoint (`channel=#myChannel`). It disconnects them, so the node leaves the
+cluster, and leaves them open, as a closed `JChannel` cannot be connected again: the routes can now use them again when
+the CamelContext is started again. The channels that the endpoints create (with `channelProperties` or the default
+configuration) are closed as before. Close a channel you give to Camel yourself when the application no longer needs
+it, for example as a bean with a destroy method (`close`).
