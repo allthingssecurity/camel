@@ -1,6 +1,6 @@
 # An exchange sanitizer for Camel developers: catch the hang, the double completion and the lost commit when they happen
 
-[![Animated explainer: how the exchange sanitizer would work (preview, click for the full video)](docs/sanitizer-explainer.gif)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4)
+[![Animated explainer: how the exchange sanitizer would work (preview, click for the full video)](docs/sanitizer-explainer-preview.gif)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4)
 
 *Preview above. [Download the 3.5-minute whiteboard explainer (MP4, captions, no sound)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4). Everything in it is design only, like this document.*
 
