@@ -1,8 +1,8 @@
 # An exchange sanitizer for Camel developers: catch the hang, the double completion and the lost commit when they happen
 
-[![Example: exchange #7, a normal run, a step that throws and a callback called twice, with what the sanitizer would report (preview, click for the full video)](docs/sanitizer-example-fast.gif)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4)
+[![Animated explainer of the exchange sanitizer: the problem, the idea, the rules, how it runs, the exchange #7 example, where TLA+ fits and the plan (captions, click for the video)](docs/sanitizer-explainer-full.gif)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4)
 
-*Preview above. [Download the 3.5-minute whiteboard explainer (MP4, captions, no sound)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4). Everything in it is design only, like this document.*
+*The whole 3.5-minute explainer above, with captions. [Download it as MP4 (captions, no sound)](https://github.com/allthingssecurity/camel/raw/camel-sanitizer-proposal/sanitizer/docs/sanitizer-explainer.mp4). Everything in it is design only, like this document.*
 
 A proposal for a dev-mode checker that watches every exchange of a running Camel application and reports, at the
 moment it happens, when one of Camel's own promises is broken: an exchange that never completes, a callback called
