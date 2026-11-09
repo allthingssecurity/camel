@@ -5,7 +5,7 @@ authors:
 reviewers: ["@davsclaus"]
 approvers: []
 creation-date: 2026-11-05
-last-updated: 2026-11-08
+last-updated: 2026-11-09
 status: implementable
 see-also:
   - "CAMEL-26630"
@@ -585,15 +585,18 @@ set), and in `camel get sanitizer`.
 
 *In development.* `camel run --sanitizer` adds the dependency, as `--chaos` does; `--dep camel:sanitizer` works too.
 With profile `dev`, the default of `camel run`, it is on. Violations are logged at WARN when they happen; a `sanitizer`
-dev console (`@DevConsole(readOnly = true)`) and `camel get sanitizer` show the report: the violations with their
-stacks, the calls still pending, and the counts per rule.
+dev console (read-only, as `@DevConsole` is by default) and `camel get sanitizer` show the report: the violations with
+their stacks, the counts per rule, and (with R1 "still pending") the calls still pending.
 
 *Spring Boot and Quarkus.* The plugin works with any `CamelContext`. A Spring Boot application turns it on in
 development with the Camel profile `dev` (`camel.main.profile=dev`, for example in a Spring `dev` profile file) or
 `camel.sanitizer.enabled=true`; a Quarkus application with `%dev.camel.sanitizer.enabled=true`. The options are read
 through the properties component, so `application.properties` works, but their tooling metadata is in camel-main only.
-`camel run --sanitizer` is refused with `--runtime=spring-boot` or `quarkus` for now, as `--chaos` is. (When no profile
-is set, the Javadoc of `camel.main.profile` calls the default `prod`; either way the sanitizer is off.)
+`camel run --sanitizer` with `--runtime=spring-boot` adds plain `camel-sanitizer` (there is no starter) and switches it
+on with `-Dcamel.sanitizer.enabled=true` unless the profile is `prod`, as `--chaos` does since CAMEL-26479; with
+`--runtime=quarkus` it is refused for now: there is no Camel Quarkus extension to add to an existing Quarkus project
+(`--chaos` uses `camel-quarkus-chaos`), and the sanitizer is not tested with Camel Quarkus yet.
+(When no profile is set, the Javadoc of `camel.main.profile` calls the default `prod`; either way the sanitizer is off.)
 
 *In a test.* Add the `camel-sanitizer` dependency in test scope and `@CamelSanitizer`, as shown in "Checking your own
 processors and components". `@CamelSanitizer` is meta-annotated with `@ExtendWith(CamelSanitizerExtension.class)`, as
@@ -697,7 +700,9 @@ Each step is its own pull request after this document:
   the CI switch, with the runs on the commits before the fixes, on user-code tests and on main. Done.
 . camel-core: the on completion listener SPI, the new `UnitOfWork` method and the calls, with the JMH run; then R2.
 . R3: the `AsyncProcessor` contract, then the sampled overlaps, with the runs on the async component suites.
-. The dev console, `camel get sanitizer` and `camel run --sanitizer`.
+. The dev console, `camel get sanitizer` and `camel run --sanitizer`. Done: `camel get sanitizer` asks the integration
+  for the console through the CLI connector when it runs, rather than reading it from the status file that is written
+  each second, as the report can list 1000 violations with their stacks.
 . R1 "still pending".
 . R4 and its hook on the `ExecutorServiceManager`, if the earlier steps show it is still wanted.
 

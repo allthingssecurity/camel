@@ -26,8 +26,8 @@ is on.
 == Getting it
 
 Add the `camel-sanitizer` dependency, in test scope for tests (see <<_in_a_test,In a test>>), or with
-`camel run --dep camel:sanitizer` for a run in development (profile `dev`, the default of `camel run`, switches it
-on).
+`camel run --sanitizer` (or `--dep camel:sanitizer`) for a run in development (profile `dev`, the default of
+`camel run`, switches it on; see <<_in_development,In development>>).
 
 == The rule it checks
 
@@ -105,7 +105,36 @@ From Java, `Sanitizer.get(camelContext)` gives the violations.
 Spring Boot and Quarkus: the plugin uses only the `CamelContext` API, and reads `camel.sanitizer.*` from the
 properties component, so `camel.sanitizer.enabled=true` in the application properties is meant to switch it on there
 too (this version is tested with plain contexts, `CamelTestSupport` and `@CamelMainTest`); the tooling metadata of the
-options is in camel-main only.
+options is in camel-main only. `camel run --sanitizer` with `--runtime=spring-boot` adds plain `camel-sanitizer` (there
+is no starter) and switches it on with `-Dcamel.sanitizer.enabled=true` unless the profile is `prod`; with
+`--runtime=quarkus` it is refused for now: there is no Camel Quarkus extension to add to an existing Quarkus project,
+and the sanitizer is not tested with Camel Quarkus yet.
+
+== In development
+
+`camel run --sanitizer` adds the dependency; with profile `dev`, the default of `camel run`, the sanitizer is on.
+Violations are logged at WARN when they happen, and the report is also in the `sanitizer` developer console and in the
+Camel CLI:
+
+[source,bash]
+----
+camel run * --sanitizer
+camel get sanitizer
+camel get sanitizer myapp --report
+----
+
+`camel get sanitizer` lists the violations of the running integrations with their rule, kind, route, step, processor
+and exchange; `--report` shows the counts per rule and per kind, and each violation with its threads and stacks
+(`--json` for both).
+
+The `sanitizer` developer console only reads, and has no options. In JSON it has `enabled` (and the `reason` when it is
+off), `calls` (the calls of steps checked), `total` (the violations reported, also those past the first 1000 that are
+counted but not listed), `rules` and `kinds` (the counts per rule and per kind), and `violations` (each with its rule,
+kind, route, step, processor, exchange id and full report); as text it is the report that is logged when the context
+stops. Like every developer console, it is served over HTTP only when the developer consoles are switched on (with
+Camel Main, `camel.management.devConsoleEnabled=true`, an `insecure:dev` option); the Camel CLI asks the integration for
+it through the CLI connector. An exception message in a report can carry message data, so keep the console to
+development.
 
 == Options
 

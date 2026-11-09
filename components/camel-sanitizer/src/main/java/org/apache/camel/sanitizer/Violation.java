@@ -52,10 +52,16 @@ public enum Violation {
                                                                 + " the exception, set it on the exchange and call the callback once");
 
     private final String title;
+    private final String rule;
     private final String fix;
 
     Violation(String title, String fix) {
+        this(title, "R1", fix);
+    }
+
+    Violation(String title, String rule, String fix) {
         this.title = title;
+        this.rule = rule;
         this.fix = fix;
     }
 
@@ -64,6 +70,13 @@ public enum Violation {
      */
     public String getTitle() {
         return title;
+    }
+
+    /**
+     * The rule it breaks: {@code R1} (the callback of a step).
+     */
+    public String getRule() {
+        return rule;
     }
 
     /**

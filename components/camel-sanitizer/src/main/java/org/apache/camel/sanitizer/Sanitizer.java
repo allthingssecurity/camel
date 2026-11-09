@@ -239,7 +239,8 @@ public final class Sanitizer {
             Violation violation, String exchangeId, String routeId, String stepId, String details, String fix) {
         String processor = processorOf(routeId, stepId);
         StringBuilder sb = new StringBuilder(512);
-        sb.append("Exchange sanitizer: ").append(violation.getTitle()).append(" (R1)\n");
+        sb.append("Exchange sanitizer: ").append(violation.getTitle()).append(" (").append(violation.getRule())
+                .append(")\n");
         sb.append("  exchange ").append(exchangeId).append(", route ").append(routeId).append(", step ").append(stepId);
         sb.append(", processor ").append(processor != null ? processor : "(not found)");
         String endpoint = endpointOf(routeId, stepId);
