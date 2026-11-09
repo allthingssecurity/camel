@@ -134,7 +134,7 @@ class SanitizerPendingCallsTest {
         Object other = listener.onStepCall(handled, "r", "process1");
         listener.onStepThrow(other, new IllegalStateException("Forced"));
         // Camel caught the throw and the exchange is done (its unit of work)
-        sanitizer.exchangeDone(handled.getExchangeId());
+        sanitizer.exchangeDone(handled);
 
         clock.addAndGet(TIMEOUT);
         List<PendingCalls.Pending> stalled = pending.stalled();
@@ -151,7 +151,7 @@ class SanitizerPendingCallsTest {
         Exchange part = part(exchange);
         listener.onStepCall(part, "r", "toPart");
         assertEquals(2, pending.size());
-        sanitizer.exchangeDone(exchange.getExchangeId());
+        sanitizer.exchangeDone(exchange);
         assertEquals(0, pending.size());
         clock.addAndGet(TIMEOUT);
         assertTrue(pending.stalled().isEmpty());
@@ -250,7 +250,7 @@ class SanitizerPendingCallsTest {
                     other.start();
                     if ((i + seed) % 3 == 0) {
                         // done while the callback of the part may still come
-                        sanitizer.exchangeDone(exchange.getExchangeId());
+                        sanitizer.exchangeDone(exchange);
                     } else {
                         join(other);
                         listener.onStepCallback(outer, false);
