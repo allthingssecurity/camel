@@ -79,6 +79,39 @@ class SanitizerActivationTest {
         start(Map.of("camel.sanitizer.enabled", "true"), null, null);
         assertNotNull(Sanitizer.get(context));
         assertEquals(1, context.getCamelContextExtension().getStepListeners().size());
+        // rules R1 and R2 by default
+        assertTrue(Sanitizer.get(context).isCheckingCallbacks());
+        assertNotNull(Sanitizer.get(context).getCommits());
+        assertEquals(1, context.getCamelContextExtension().getOnCompletionListeners().size());
+        assertEquals(1, context.getManagementStrategy().getEventNotifiers().stream()
+                .filter(SanitizerContextServicePlugin.ExchangeDoneNotifier.class::isInstance).count());
+    }
+
+    @Test
+    void checksCallbackOnlyInstallsNoOnCompletionListener() throws Exception {
+        start(Map.of("camel.sanitizer.enabled", "true", "camel.sanitizer.checks", "callback"), null, null);
+        assertNull(Sanitizer.get(context).getCommits());
+        assertEquals(1, context.getCamelContextExtension().getStepListeners().size());
+        assertTrue(context.getCamelContextExtension().getOnCompletionListeners().isEmpty());
+        assertTrue(context.getManagementStrategy().getEventNotifiers().stream()
+                .noneMatch(SanitizerContextServicePlugin.ExchangeDoneNotifier.class::isInstance));
+    }
+
+    @Test
+    void checksCommitOnlyDoesNotReportTheCallbacks() throws Exception {
+        SanitizerTestSession session = SanitizerTestSession.open("commitOnly");
+        try {
+            start(Map.of("camel.sanitizer.checks", " Commit "), null, session);
+            assertFalse(Sanitizer.get(context).isCheckingCallbacks());
+            assertNotNull(Sanitizer.get(context).getCommits());
+            // the step listener stays, to name the step of a report of R2
+            assertEquals(1, context.getCamelContextExtension().getStepListeners().size());
+            assertEquals(1, context.getCamelContextExtension().getOnCompletionListeners().size());
+            sendToBrokenRoute();
+            assertEquals(List.of(), session.drain());
+        } finally {
+            session.close();
+        }
     }
 
     @Test
@@ -131,7 +164,8 @@ class SanitizerActivationTest {
         Exception e = assertThrows(Exception.class,
                 () -> start(Map.of("camel.sanitizer.enabled", "true", "camel.sanitizer.checks", "callback,threads"), null,
                         null));
-        assertTrue(messages(e).contains("camel.sanitizer.checks=callback,threads has the unknown check threads"),
+        assertTrue(messages(e).contains("camel.sanitizer.checks=callback,threads has the unknown check threads (the checks"
+                                        + " of this version: callback, commit)"),
                 messages(e));
         e = assertThrows(Exception.class,
                 () -> start(Map.of("camel.sanitizer.enabled", "true", "camel.sanitizer.stackDepth", "-1"), null, null));
@@ -143,6 +177,7 @@ class SanitizerActivationTest {
         start(Map.of("camel.sanitizer.enabled", "true", "camel.sanitizer.checks", "none"), null, null);
         assertNull(Sanitizer.get(context));
         assertTrue(context.getCamelContextExtension().getStepListeners().isEmpty());
+        assertTrue(context.getCamelContextExtension().getOnCompletionListeners().isEmpty());
     }
 
     @Test
