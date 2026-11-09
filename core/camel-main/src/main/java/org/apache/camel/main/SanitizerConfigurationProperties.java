@@ -22,7 +22,8 @@ import org.apache.camel.spi.Metadata;
 
 /**
  * camel-sanitizer configuration: checks during development and tests that the processors of the routes keep the
- * contract of AsyncProcessor (requires camel-sanitizer on the classpath).
+ * contract of AsyncProcessor, and that the commits of the consumers run exactly once (requires camel-sanitizer on the
+ * classpath).
  */
 @Configurer(extended = true)
 public class SanitizerConfigurationProperties implements BootstrapCloseable {
@@ -31,8 +32,8 @@ public class SanitizerConfigurationProperties implements BootstrapCloseable {
 
     @Metadata
     private Boolean enabled;
-    @Metadata(defaultValue = "callback")
-    private String checks = "callback";
+    @Metadata(defaultValue = "callback,commit")
+    private String checks = "callback,commit";
     @Metadata(defaultValue = "32")
     private int stackDepth = 32;
     @Metadata(defaultValue = "true")
@@ -69,7 +70,8 @@ public class SanitizerConfigurationProperties implements BootstrapCloseable {
 
     /**
      * The checks to run, separated by commas: callback (rule R1, the callback of each call of the processor of a step
-     * is called exactly once, and process does not throw).
+     * is called exactly once, and process does not throw) and commit (rule R2, each commit of a consumer runs exactly
+     * once, for the unit of work that owns it).
      */
     public void setChecks(String checks) {
         this.checks = checks;
@@ -108,7 +110,8 @@ public class SanitizerConfigurationProperties implements BootstrapCloseable {
 
     /**
      * The checks to run, separated by commas: callback (rule R1, the callback of each call of the processor of a step
-     * is called exactly once, and process does not throw).
+     * is called exactly once, and process does not throw) and commit (rule R2, each commit of a consumer runs exactly
+     * once, for the unit of work that owns it).
      */
     public SanitizerConfigurationProperties withChecks(String checks) {
         this.checks = checks;

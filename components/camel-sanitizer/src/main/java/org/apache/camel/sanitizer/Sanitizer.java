@@ -34,6 +34,7 @@ import org.apache.camel.CamelContext;
 import org.apache.camel.DelegateProcessor;
 import org.apache.camel.Endpoint;
 import org.apache.camel.EndpointAware;
+import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
 import org.apache.camel.Route;
 import org.apache.camel.model.BeanDefinition;
@@ -43,6 +44,7 @@ import org.apache.camel.model.ProcessorDefinition;
 import org.apache.camel.model.RouteDefinition;
 import org.apache.camel.spi.IdAware;
 import org.apache.camel.support.AsyncProcessorConverterHelper;
+import org.apache.camel.support.OnCompletionListenerHelper;
 import org.apache.camel.support.processor.DelegateAsyncProcessor;
 import org.apache.camel.support.processor.DelegateSyncProcessor;
 import org.apache.camel.util.URISupport;
@@ -80,11 +82,30 @@ public final class Sanitizer {
     // what a processor threw and was reported, on this thread since its last step call: thrown on through an outer
     // step, it is not reported again (weak, so a thread of a pool does not keep it)
     private final ThreadLocal<WeakReference<Throwable>> lastReportedThrow = new ThreadLocal<>();
+    // whether rule R1 is checked (the step listener also tells R2 which step runs on a thread)
+    private final boolean callbacks;
+    // the commits of consumers followed for rule R2 (null when it is off)
+    private final Commits commits;
+    // the innermost step whose process runs on this thread, for the reports of R2 (only when R2 is on)
+    private final ThreadLocal<SanitizerStepListener.StepCall> currentStep;
+    private final AtomicBoolean droppedLogged = new AtomicBoolean();
 
     Sanitizer(CamelContext camelContext, int stackDepth, SanitizerTestSession session) {
+        this(camelContext, stackDepth, session, true, false);
+    }
+
+    /**
+     * @param callbacks whether rule R1 is checked
+     * @param commits   whether rule R2 is checked
+     */
+    Sanitizer(CamelContext camelContext, int stackDepth, SanitizerTestSession session, boolean callbacks,
+              boolean commits) {
         this.camelContext = camelContext;
         this.stackDepth = stackDepth;
         this.session = session;
+        this.callbacks = callbacks;
+        this.commits = commits ? new Commits() : null;
+        this.currentStep = commits ? new ThreadLocal<>() : null;
         for (Violation v : Violation.values()) {
             counts.put(v, new LongAdder());
         }
@@ -129,6 +150,51 @@ public final class Sanitizer {
         return stackDepth;
     }
 
+    /**
+     * Whether rule R1 (the callback of a step) is checked.
+     */
+    boolean isCheckingCallbacks() {
+        return callbacks;
+    }
+
+    /**
+     * The commits followed for rule R2, or null when it is off.
+     */
+    Commits getCommits() {
+        return commits;
+    }
+
+    /**
+     * The process of a step starts on this thread (only when R2 is on).
+     */
+    void stepStarted(SanitizerStepListener.StepCall call) {
+        if (currentStep != null) {
+            call.outer = currentStep.get();
+            currentStep.set(call);
+        }
+    }
+
+    /**
+     * The process of a step returned or threw on this thread (only when R2 is on).
+     */
+    void stepEnded(SanitizerStepListener.StepCall call) {
+        if (currentStep != null && currentStep.get() == call) {
+            if (call.outer != null) {
+                currentStep.set(call.outer);
+            } else {
+                currentStep.remove();
+            }
+            call.outer = null;
+        }
+    }
+
+    /**
+     * The innermost step whose process runs on this thread, or null.
+     */
+    SanitizerStepListener.StepCall currentStep() {
+        return currentStep != null ? currentStep.get() : null;
+    }
+
     void called() {
         calls.increment();
         if (lastReportedThrow.get() != null) {
@@ -171,6 +237,9 @@ public final class Sanitizer {
     private static boolean isOwnFrame(String className) {
         return className.equals(Sanitizer.class.getName())
                 || className.startsWith(SanitizerStepListener.class.getName())
+                || className.startsWith(SanitizerOnCompletionListener.class.getName())
+                || className.startsWith(Commits.class.getName())
+                || className.equals(OnCompletionListenerHelper.class.getName())
                 // the wrapper of camel-core that calls the step listeners (package-private, so named here: a rename of
                 // org.apache.camel.impl.engine.StepListenerProcessor must be followed here)
                 || className.startsWith("org.apache.camel.impl.engine.StepListenerProcessor");
@@ -204,6 +273,17 @@ public final class Sanitizer {
      */
     void record(
             Violation violation, String exchangeId, String routeId, String stepId, String details, String fix) {
+        report(violation, () -> violationOf(violation, exchangeId, routeId, stepId, details, fix));
+    }
+
+    /**
+     * Reports a violation of rule R2 found in the commits.
+     */
+    void recordCommit(Commits.Finding f) {
+        report(f.kind, () -> commitViolationOf(f));
+    }
+
+    private void report(Violation violation, Supplier<SanitizerViolation> build) {
         counts.get(violation).increment();
         boolean keep = kept.incrementAndGet() <= MAX_KEPT;
         if (!keep && overflowLogged.compareAndSet(false, true)) {
@@ -219,7 +299,7 @@ public final class Sanitizer {
             @Override
             public SanitizerViolation get() {
                 if (built == null) {
-                    built = violationOf(violation, exchangeId, routeId, stepId, details, fix);
+                    built = build.get();
                 }
                 return built;
             }
@@ -239,7 +319,7 @@ public final class Sanitizer {
             Violation violation, String exchangeId, String routeId, String stepId, String details, String fix) {
         String processor = processorOf(routeId, stepId);
         StringBuilder sb = new StringBuilder(512);
-        sb.append("Exchange sanitizer: ").append(violation.getTitle()).append(" (R1)\n");
+        sb.append("Exchange sanitizer: ").append(violation.getTitle()).append(" (").append(violation.getRule()).append(")\n");
         sb.append("  exchange ").append(exchangeId).append(", route ").append(routeId).append(", step ").append(stepId);
         sb.append(", processor ").append(processor != null ? processor : "(not found)");
         String endpoint = endpointOf(routeId, stepId);
@@ -253,6 +333,130 @@ public final class Sanitizer {
         sb.append("  Usual fix: ").append(fix).append('.');
         return new SanitizerViolation(
                 violation, camelContext.getName(), exchangeId, routeId, stepId, processor, sb.toString());
+    }
+
+    /**
+     * The report of a violation of rule R2. The exchange, route and endpoint are the ones the commit was added for (the
+     * consumer's); the step, when there is one, is the step that ran on the thread when it was found.
+     */
+    private SanitizerViolation commitViolationOf(Commits.Finding f) {
+        StringBuilder sb = new StringBuilder(512);
+        sb.append("Exchange sanitizer: ").append(f.kind.getTitle()).append(" (R2)\n");
+        sb.append("  commit ").append(f.type).append(" of exchange ").append(f.exchangeId).append(", route ")
+                .append(f.routeId);
+        String consumer = consumerOf(f.routeId);
+        if (consumer != null) {
+            sb.append(", consumer ").append(consumer);
+        }
+        if (f.endpoint != null) {
+            sb.append(", endpoint ").append(URISupport.sanitizeUri(f.endpoint));
+        }
+        sb.append('\n');
+        if (f.stepId != null) {
+            String processor = processorOf(f.stepRouteId, f.stepId);
+            sb.append("  at step ").append(f.stepId).append(" of route ").append(f.stepRouteId).append(", processor ")
+                    .append(processor != null ? processor : "(not found)");
+            String endpoint = endpointOf(f.stepRouteId, f.stepId);
+            if (endpoint != null) {
+                sb.append(", endpoint ").append(endpoint);
+            }
+            sb.append('\n');
+        }
+        switch (f.kind) {
+            case COMMIT_RUN_TWICE -> {
+                append(sb, f.firstRun, "first run, with exchange " + f.firstRunWith);
+                append(sb, f.trace, "run again, with exchange " + f.with);
+            }
+            case COMMIT_HANDED_OVER_BY_OTHER_EXCHANGE -> {
+                sb.append("  its unit of work was created for exchange ").append(f.exchangeId)
+                        .append(", and exchange ").append(f.with).append(" handed it over to exchange ").append(f.to)
+                        .append(", so it would run with the outcome of exchange ").append(f.to).append('\n');
+                append(sb, f.trace, "handed over");
+            }
+            case COMMIT_HANDED_OVER_TWICE -> {
+                append(sb, f.handover, "first handed over by exchange " + f.handedOverBy);
+                append(sb, f.trace, "handed over again by exchange " + f.with + " to exchange " + f.to);
+            }
+            case COMMIT_NEVER_RUN -> {
+                if (f.copy) {
+                    sb.append("  the CamelContext stopped while it waited in exchange ").append(f.with)
+                            .append(", which was never routed\n");
+                } else {
+                    sb.append("  exchange ").append(f.with)
+                            .append(" is done, and the commit was neither run nor handed over or taken out by the exchange"
+                                    + " (it may have left the unit of work another way, such as"
+                                    + " UnitOfWork.handoverSynchronization called directly)\n");
+                }
+            }
+            default -> {
+                // not a violation of R2
+            }
+        }
+        sb.append("  Each commit of a consumer (an on completion it adds to the exchange before routing it) must run once,"
+                  + " where it is held at the end, and moves only by a handover of the exchange its unit of work was"
+                  + " created for (see Synchronization).\n");
+        sb.append("  Usual fix: ").append(f.kind.getFix()).append('.');
+        return new SanitizerViolation(
+                f.kind, camelContext.getName(), f.exchangeId, f.stepId != null ? f.stepRouteId : f.routeId, f.stepId,
+                f.type, sb.toString());
+    }
+
+    private static void append(StringBuilder sb, Trace trace, String what) {
+        if (trace != null) {
+            trace.appendTo(sb, what);
+        } else {
+            sb.append("  ").append(what).append('\n');
+        }
+    }
+
+    /**
+     * The class of the consumer of the route, or null.
+     */
+    private String consumerOf(String routeId) {
+        try {
+            Route route = routeId != null ? camelContext.getRoute(routeId) : null;
+            return route != null && route.getConsumer() != null ? route.getConsumer().getClass().getName() : null;
+        } catch (RuntimeException e) {
+            LOG.debug("Cannot find the consumer of route {}", routeId, e);
+            return null;
+        }
+    }
+
+    /**
+     * An exchange is done (its completed or failed event, while it still has its unit of work): for rule R2, a commit
+     * still in its unit of work that has not run never runs.
+     */
+    void exchangeDone(Exchange exchange) {
+        if (commits != null) {
+            for (Commits.Finding f : commits.done(exchange.getExchangeId(), exchange.getFromRouteId(),
+                    exchange.getUnitOfWork())) {
+                recordCommit(f);
+            }
+        }
+    }
+
+    /**
+     * The CamelContext stopped: the commits still in a copy that was never routed never run.
+     */
+    void contextStopped() {
+        if (commits != null) {
+            for (Commits.Finding f : commits.stopped()) {
+                recordCommit(f);
+            }
+        }
+    }
+
+    /**
+     * Logs once that the bound of the commits followed was reached.
+     */
+    void commitsDropped() {
+        if (commits != null && !droppedLogged.get() && commits.getDropped() > 0
+                && droppedLogged.compareAndSet(false, true)) {
+            LOG.warn("Exchange sanitizer: more than {} commits wait in exchanges without a unit of work, or were taken out"
+                     + " and have not run, in CamelContext {}; checks incomplete: the oldest are no longer followed (the"
+                     + " report counts them)",
+                    Commits.MAX_FOLLOWED, camelContext.getName());
+        }
     }
 
     /**
@@ -407,8 +611,11 @@ public final class Sanitizer {
         StringBuilder sb = counts();
         for (SanitizerViolation v : violations) {
             sb.append("\n  ").append(v.getKind().getTitle()).append(": exchange ").append(v.getExchangeId())
-                    .append(", route ").append(v.getRouteId()).append(", step ").append(v.getStepId())
-                    .append(", processor ").append(v.getProcessor());
+                    .append(", route ").append(v.getRouteId());
+            if (v.getStepId() != null) {
+                sb.append(", step ").append(v.getStepId());
+            }
+            sb.append("R2".equals(v.getKind().getRule()) ? ", commit " : ", processor ").append(v.getProcessor());
         }
         return sb.toString();
     }
@@ -417,6 +624,13 @@ public final class Sanitizer {
         StringBuilder sb = new StringBuilder(256);
         sb.append("Exchange sanitizer report of CamelContext ").append(camelContext.getName()).append(": ");
         sb.append(getCallCount()).append(" calls of steps checked");
+        if (commits != null) {
+            sb.append(", ").append(commits.getCommitCount()).append(" commits followed");
+            long dropped = commits.getDropped();
+            if (dropped > 0) {
+                sb.append(", checks incomplete: ").append(dropped).append(" commits no longer followed");
+            }
+        }
         long total = 0;
         for (Violation v : Violation.values()) {
             total += getViolationCount(v);
