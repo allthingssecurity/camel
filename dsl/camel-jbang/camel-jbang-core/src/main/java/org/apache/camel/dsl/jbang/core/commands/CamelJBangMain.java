@@ -371,6 +371,7 @@ public class CamelJBangMain implements Callable<Integer> {
                     .addSubcommand("rest", new CommandLine(new ListRest(this)))
                     .addSubcommand("route", new CommandLine(new CamelRouteStatus(this)))
                     .addSubcommand("route-controller", new CommandLine(new RouteControllerAction(this)))
+                    .addSubcommand("sanitizer", new CommandLine(new ListSanitizer(this)))
                     .addSubcommand("service", new CommandLine(new ListService(this)))
                     .addSubcommand("source", new CommandLine(new CamelSourceAction(this)))
                     .addSubcommand("sql-trace", new CommandLine(new ListSqlTrace(this)))

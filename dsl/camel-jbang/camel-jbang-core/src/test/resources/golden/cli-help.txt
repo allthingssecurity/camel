@@ -1715,7 +1715,7 @@ Usage: camel debug [-h] [--ago] [--background] [--backlog-trace] [--console]
                    [--logging-json] [--mask] [--mcp] [--mcp-stdio] [--metrics]
                    [--observe] [--open-telemetry-agent] [--openapi-ui]
                    [--package-scan-jars] [--pretty] [--prompt]
-                   [--remote-attach] [--show-exchange-properties]
+                   [--remote-attach] [--sanitizer] [--show-exchange-properties]
                    [--skip-plugins] [--source] [--trace] [--verbose] [--chaos
                    [=<file>]] [--download[=<download>]] [--example[=<example>]]
                    [--logging[=<logging>]] [--logging-color[=<loggingColor>]]
@@ -1896,6 +1896,12 @@ Debug local Camel integration
                                newer
       --chaos-report=<file>  Write the chaos report as JSON to this file when
                                the run ends (with --chaos)
+      --sanitizer            Add camel-sanitizer, which reports where the
+                               processors of the routes break the contract of
+                               AsyncProcessor and where the commits of the
+                               consumers do not run exactly once (camel get
+                               sanitizer); on with profile dev, never with
+                               prod. Not with Quarkus yet
       --local-kamelet-dir=<localKameletDir>
                              Local directory (or github link) for loading
                                Kamelets (takes precedence). Multiple
@@ -2712,7 +2718,7 @@ Usage: camel dev [-h] [--background] [--backlog-trace] [--console] [--dev]
                  [--empty] [--fresh] [--health] [--ignore-loading-error]
                  [--jfr] [--lazy-bean] [--logging-json] [--mcp] [--mcp-stdio]
                  [--metrics] [--observe] [--open-telemetry-agent]
-                 [--openapi-ui] [--package-scan-jars] [--prompt]
+                 [--openapi-ui] [--package-scan-jars] [--prompt] [--sanitizer]
                  [--skip-plugins] [--trace] [--verbose] [--chaos[=<file>]]
                  [--download[=<download>]] [--example[=<example>]] [--logging
                  [=<logging>]] [--logging-color[=<loggingColor>]]
@@ -2886,6 +2892,12 @@ Run in dev mode with live reload
                                newer
       --chaos-report=<file>  Write the chaos report as JSON to this file when
                                the run ends (with --chaos)
+      --sanitizer            Add camel-sanitizer, which reports where the
+                               processors of the routes break the contract of
+                               AsyncProcessor and where the commits of the
+                               consumers do not run exactly once (camel get
+                               sanitizer); on with profile dev, never with
+                               prod. Not with Quarkus yet
       --local-kamelet-dir=<localKameletDir>
                              Local directory (or github link) for loading
                                Kamelets (takes precedence). Multiple
@@ -3437,6 +3449,8 @@ Commands:
   rest              Get REST services of Camel integrations
   route             Get status of Camel routes
   route-controller  List status of route controller
+  sanitizer         Get the violations the exchange sanitizer reported in
+                      running integrations (camel-sanitizer)
   service           Get services of Camel integrations
   source            Display Camel route source code
   sql-trace         Get SQL query trace data
@@ -4231,6 +4245,38 @@ Examples:
   camel get route-controller
   camel get route-controller --json
 
+== camel get sanitizer --help
+Usage: camel get sanitizer [-h] [--json] [--report] [--watch]
+                           [--duration=<duration>] [--sort=<sort>] [<name>]
+Get the violations the exchange sanitizer reported in running integrations
+(camel-sanitizer)
+      [<name>]        Name or pid of running Camel integration
+                        Default: *
+  -h, --help          Display the help and sub-commands
+      --watch         Execute periodically and showing output fullscreen
+      --json          Output in JSON Format
+      --duration=<duration>
+                      How long to keep watching or following, in millis or as a
+                        duration such as 30s (default: until Enter is pressed)
+                        Default: 0
+      --report        Show the report: the counts per rule and per kind, the
+                        commits followed, each violation with its threads and
+                        stacks, and the still pending warnings
+      --sort=<sort>   Sort by pid, name or age
+                        Default: pid
+
+Lists the violations of the integrations that have camel-sanitizer switched
+on: the rule, the kind, the route, the step, the processor and the exchange
+(for rule R2 the processor is the class of the commit of the consumer).
+With --report it shows the report of each integration instead: the counts per
+rule and per kind, the commits followed, each violation with its threads and
+stacks, and the calls reported still pending (warnings).
+
+Examples:
+  camel get sanitizer
+  camel get sanitizer myApp --report
+  camel get sanitizer --json
+
 == camel get service --help
 Usage: camel get service [-h] [--json] [--metadata] [--short-uri] [--watch]
                          [--wide-uri] [--duration=<duration>] [--sort=<sort>]
@@ -4865,7 +4911,7 @@ Usage: camel run [-h] [--background] [--backlog-trace] [--console] [--dev]
                  [--empty] [--fresh] [--health] [--ignore-loading-error]
                  [--jfr] [--lazy-bean] [--logging-json] [--mcp] [--mcp-stdio]
                  [--metrics] [--observe] [--open-telemetry-agent]
-                 [--openapi-ui] [--package-scan-jars] [--prompt]
+                 [--openapi-ui] [--package-scan-jars] [--prompt] [--sanitizer]
                  [--skip-plugins] [--trace] [--verbose] [--chaos[=<file>]]
                  [--download[=<download>]] [--example[=<example>]] [--logging
                  [=<logging>]] [--logging-color[=<loggingColor>]]
@@ -5039,6 +5085,12 @@ Run as local Camel integration
                                newer
       --chaos-report=<file>  Write the chaos report as JSON to this file when
                                the run ends (with --chaos)
+      --sanitizer            Add camel-sanitizer, which reports where the
+                               processors of the routes break the contract of
+                               AsyncProcessor and where the commits of the
+                               consumers do not run exactly once (camel get
+                               sanitizer); on with profile dev, never with
+                               prod. Not with Quarkus yet
       --local-kamelet-dir=<localKameletDir>
                              Local directory (or github link) for loading
                                Kamelets (takes precedence). Multiple
@@ -6265,7 +6317,7 @@ stderr:
                    [--empty] [--fresh] [--health] [--ignore-loading-error]
                    [--jfr] [--lazy-bean] [--logging-json] [--mcp] [--mcp-stdio]
                    [--metrics] [--observe] [--open-telemetry-agent]
-                   [--openapi-ui] [--package-scan-jars] [--prompt]
+                   [--openapi-ui] [--package-scan-jars] [--prompt] [--sanitizer]
                    [--skip-plugins] [--trace] [--verbose] [--chaos[=<file>]]
                    [--download[=<download>]] [--example[=<example>]] [--logging
                    [=<logging>]] [--logging-color[=<loggingColor>]]
