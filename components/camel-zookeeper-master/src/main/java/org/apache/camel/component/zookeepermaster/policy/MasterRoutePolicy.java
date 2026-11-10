@@ -30,6 +30,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import org.apache.camel.CamelContext;
 import org.apache.camel.CamelContextAware;
 import org.apache.camel.Route;
+import org.apache.camel.RuntimeCamelException;
 import org.apache.camel.api.management.ManagedAttribute;
 import org.apache.camel.api.management.ManagedOperation;
 import org.apache.camel.api.management.ManagedResource;
@@ -81,7 +82,8 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
     private volatile ZookeeperGroupListenerSupport groupListener;
     private volatile CamelNodeState thisNodeState;
     private CamelContext camelContext;
-    private Route route;
+    // the route of the policy: set when the route is initialized, cleared when it is removed (under the service lock)
+    private volatile Route route;
 
     @Override
     public CamelContext getCamelContext() {
@@ -222,7 +224,67 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
     @Override
     public void onInit(Route route) {
         super.onInit(route);
-        this.route = route;
+
+        lock.lock();
+        try {
+            this.route = route;
+            // the route is added again after it was removed (a route reload with the same policy), or the policy was
+            // started before its route was initialized (a route added to a running CamelContext): join the group now
+            if (isStarted() && groupListener == null) {
+                joinGroup();
+            }
+        } catch (Exception e) {
+            throw RuntimeCamelException.wrapRuntimeCamelException(e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void onRemove(Route route) {
+        lock.lock();
+        try {
+            if (route != this.route) {
+                return;
+            }
+            // the route is removed: leave the group, so that another node becomes the master and runs the route. The
+            // policy is a service of the CamelContext and keeps running, so it joins again when the route is added again
+            leaveGroup();
+            this.route = null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void onStart(Route route) {
+        keepConsumerStoppedUnlessMaster(route);
+    }
+
+    @Override
+    public void onResume(Route route) {
+        keepConsumerStoppedUnlessMaster(route);
+    }
+
+    // the route was started or resumed (from JMX, the controlbus, a scheduled route policy, or as it is not set to
+    // autoStartup=false), which started or resumed its consumer: a node that is not the master keeps it stopped, and
+    // starts it when it is elected (a resumed consumer that is marked as started would not be started again then)
+    private void keepConsumerStoppedUnlessMaster(Route route) {
+        leadershipLock.lock();
+        try {
+            // a master that has not started its consumer yet starts it with its pending start (or retry)
+            if (route != this.route || masterConsumer.get() || isLeader()) {
+                return;
+            }
+            LOG.debug("Not the master. Keeping the consumer stopped: {}", route.getEndpoint());
+            stopConsumer(route.getConsumer());
+        } catch (Exception e) {
+            getExceptionHandler().handleException("Failed to stop the consumer of: " + route.getEndpoint()
+                                                  + " which only the master runs",
+                    e);
+        } finally {
+            leadershipLock.unlock();
+        }
     }
 
     @Override
@@ -232,9 +294,18 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
         ObjectHelper.notNull(camelContext, "CamelContext");
         StringHelper.notEmpty("groupName", groupName);
 
-        String path = getCamelClusterPath(groupName);
         this.retryExecutor = camelContext.getExecutorServiceManager()
                 .newSingleThreadScheduledExecutor(this, "ZooKeeperMasterRoutePolicyRetry");
+        // a policy added to a running CamelContext is started before its route is initialized: it joins the group
+        // then (onInit)
+        if (route != null) {
+            joinGroup();
+        }
+    }
+
+    // under the service lock: joins the group of the nodes that run the route
+    private void joinGroup() throws Exception {
+        String path = getCamelClusterPath(groupName);
         this.groupListener = new ZookeeperGroupListenerSupport(path, route.getEndpoint(), onLockOwned(), onDisconnected());
         this.groupListener.setCamelContext(camelContext);
         this.groupListener.setCurator(curator);
@@ -247,6 +318,38 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
                 getCamelContext(), getGroupName());
         thisNodeState = createNodeState();
         groupListener.updateState(thisNodeState);
+    }
+
+    // under the service lock: leaves the group, and this node is no longer the master
+    private void leaveGroup() {
+        ZookeeperGroupListenerSupport listener = groupListener;
+        if (listener == null) {
+            return;
+        }
+        // a start (or retry) that checks the leadership from now on does not start the consumer
+        groupListener = null;
+        // the group thread is interrupted before the leadership lock is taken, as in doStop: a consumer start in flight
+        // on it holds the lock. Closing the group tells the listeners that it is disconnected, which stops the consumer
+        try {
+            ServiceHelper.stopAndShutdownServices(listener);
+        } catch (Exception e) {
+            LOG.warn("Failed to leave the group of: {}. This exception is ignored.", route.getEndpoint(), e);
+        }
+        leadershipLock.lock();
+        try {
+            thisNodeState = null;
+            failedStarts = 0;
+            cancelRetry();
+            if (masterConsumer.getAndSet(false)) {
+                // a start that completed while the group was closed
+                stopConsumer(route.getConsumer());
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to stop master consumer: {}. This exception is ignored.", route.getEndpoint(), e);
+        } finally {
+            leadershipLock.unlock();
+        }
+        LOG.info("Left the group as the route was removed: {}", route.getEndpoint());
     }
 
     @Override
@@ -283,21 +386,22 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
             }
             // the event may be stale: the group sets connected to false before it tells the listeners that it is
             // disconnected, and the disconnect may have been handled since the event checked it
-            if (!isRunAllowed() || masterConsumer.get() || !isLeader()) {
+            Route current = this.route;
+            if (!isRunAllowed() || masterConsumer.get() || !isLeader() || current == null) {
                 return;
             }
             try {
                 // ensure endpoint is also started
-                LOG.info("Elected as master. Starting consumer: {}", route.getEndpoint());
-                startConsumer(route.getConsumer());
+                LOG.info("Elected as master. Starting consumer: {}", current.getEndpoint());
+                startConsumer(current.getConsumer());
             } catch (Exception e) {
                 if (!isRunAllowed()) {
-                    LOG.debug("Stopping while starting master consumer for: {}", route.getEndpoint(), e);
+                    LOG.debug("Stopping while starting master consumer for: {}", current.getEndpoint(), e);
                     return;
                 }
                 // try again later, as long as this node is the master (no later event may come)
                 failedStarts++;
-                getExceptionHandler().handleException("Failed to start master consumer for: " + route.getEndpoint()
+                getExceptionHandler().handleException("Failed to start master consumer for: " + current.getEndpoint()
                                                       + " (attempt #" + failedStarts + "). Trying again in " + retryDelay
                                                       + " millis.",
                         e);
@@ -315,10 +419,10 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
                 thisNodeState.setStarted(true);
                 groupListener.updateState(thisNodeState);
             } catch (Exception e) {
-                getExceptionHandler().handleException("Failed to publish the started state of: " + route.getEndpoint(), e);
+                getExceptionHandler().handleException("Failed to publish the started state of: " + current.getEndpoint(), e);
             }
 
-            LOG.info("Elected as master. Consumer started: {}", route.getEndpoint());
+            LOG.info("Elected as master. Consumer started: {}", current.getEndpoint());
         } finally {
             leadershipLock.unlock();
         }
@@ -360,13 +464,16 @@ public class MasterRoutePolicy extends RoutePolicySupport implements CamelContex
     protected Runnable onDisconnected() {
         return () -> {
             leadershipLock.lock();
+            Route current = this.route;
             try {
                 masterConsumer.set(false);
                 failedStarts = 0;
                 cancelRetry();
-                stopConsumer(route.getConsumer());
+                if (current != null) {
+                    stopConsumer(current.getConsumer());
+                }
             } catch (Exception e) {
-                LOG.warn("Failed to stop master consumer: {}", route.getEndpoint(), e);
+                LOG.warn("Failed to stop master consumer: {}", current.getEndpoint(), e);
             } finally {
                 leadershipLock.unlock();
             }
