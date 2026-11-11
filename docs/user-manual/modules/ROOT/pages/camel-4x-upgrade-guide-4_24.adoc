@@ -671,6 +671,14 @@ exception was dropped and that callback continued the exchange as a success. A s
 and logged at WARN; before, the exchange was continued a second time. There is no option for the old behaviour; fix the
 processor to set the exception on the exchange and call the callback, as an `AsyncProcessor` must.
 
+=== camel-core - an Error of a transformer of the input or output type of a route fails the exchange
+
+An `Error` that is not a `VirtualMachineError` (such as an `AssertionError` or a `NoClassDefFoundError`), thrown by a
+transformer or validator of the input or output type of a route (`inputType`, `outputType`), now fails the exchange as an
+exception does: the exchange gets it (wrapped in a `CamelExecutionException`). Before, it was thrown to the caller of
+the route, without the end of the unit of work, so the exchange could stay inflight. The same applies to the processor of a transacted exchange that throws
+such an `Error` from its synchronous `process`. A `VirtualMachineError` is left as before. See the next section.
+
 === camel-core - an Error thrown by a Processor fails the exchange
 
 When a plain `Processor` (in `process(...)`, in `bean(...)` for a bean that is a `Processor`, or as a producer that is
