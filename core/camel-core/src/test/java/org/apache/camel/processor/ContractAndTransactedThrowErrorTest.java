@@ -17,6 +17,7 @@
 package org.apache.camel.processor;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.camel.AsyncCallback;
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -79,6 +81,25 @@ class ContractAndTransactedThrowErrorTest extends ContextTestSupport {
         assertFailedWithAssertionError(out);
         assertMockEndpointsSatisfied();
         assertEquals(0, context.getInflightRepository().size(), "the exchange must not stay inflight");
+    }
+
+    @Test
+    void doCatchCatchesAnErrorOfAProcessorOfATransactedExchange() throws Exception {
+        // a step without an error handler of its own (here in a doTry) calls a plain Processor synchronously when the
+        // exchange is transacted: the Error must fail the exchange there, so the doCatch gets it, and the next step of
+        // the doTry does not run
+        getMockEndpoint("mock:afterError").expectedMessageCount(0);
+        getMockEndpoint("mock:caught").expectedMessageCount(1);
+
+        Exchange out = template.asyncSend("direct:transacted", e -> {
+            e.getMessage().setBody("Hello");
+            e.getExchangeExtension().setTransacted(true);
+        }).get(10, TimeUnit.SECONDS);
+
+        assertMockEndpointsSatisfied();
+        assertNull(out.getException());
+        assertInstanceOf(AssertionError.class,
+                out.getProperty(Exchange.EXCEPTION_CAUGHT, Throwable.class).getCause());
     }
 
     @Test
@@ -140,6 +161,16 @@ class ContractAndTransactedThrowErrorTest extends ContextTestSupport {
 
                 from("direct:input").inputType("other:Good").to("mock:result");
                 from("direct:output").inputType("other:Good").outputType("other:Out").to("mock:output");
+
+                from("direct:transacted")
+                        .doTry()
+                        .process(e -> {
+                            throw new AssertionError("in a transaction");
+                        })
+                        .to("mock:afterError")
+                        .doCatch(AssertionError.class)
+                        .to("mock:caught")
+                        .end();
             }
         };
     }
