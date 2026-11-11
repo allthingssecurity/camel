@@ -186,7 +186,8 @@ additional documentation of the features above.
 
 A plain `Processor` (in `process(...)`, in `bean(...)` for a bean that is a `Processor`, or a producer that is not an
 `AsyncProcessor`) may throw an `Error` instead of an exception. The same rules apply to an `Error` of the expression of
-a `recipientList`, of the expression of a `split` with `synchronous=true`, and of a data type transformer:
+a `recipientList`, of the expression of a `split` with `synchronous=true`, of a data type transformer, of the
+`AggregationStrategy` of a `split`, `multicast` or `recipientList`, and of the iterator of a streaming `split`:
 
 [cols="2,4",options="header"]
 |===
@@ -202,7 +203,8 @@ failure: redelivery, `onException`, `doCatch` and a dead letter channel get it. 
 |A `VirtualMachineError`, such as `OutOfMemoryError`, `StackOverflowError` or `InternalError`
 |Camel's error handling does not get it (the JVM may no longer be in a consistent state, so the application should not
 handle it). It is not set on the exchange, but thrown on after the processor's
-callback was called. Depending on the error handler, the `Error` reaches the caller (and the exchange may stay
+callback was called (an `AggregationStrategy` or the iterator of a split: thrown on from the task of the split,
+without calling it). Depending on the error handler, the `Error` reaches the caller (and the exchange may stay
 inflight), or it is only logged and the route continues as if the processor had succeeded
 |===
 
