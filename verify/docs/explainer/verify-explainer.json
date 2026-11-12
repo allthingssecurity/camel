@@ -1,0 +1,32 @@
+{
+  "duration": 54,
+  "acts": [
+    { "t": 0, "label": "1 / what happens" },
+    { "t": 22.6, "label": "2 / how camel verify finds it" },
+    { "t": 37.6, "label": "3 / the trade-off" },
+    { "t": 50.0, "label": "" }
+  ],
+  "captions": [
+    { "t": -1, "text": "a route reads files and calls a costly api, once per distinct body." },
+    { "t": 3.0, "text": "f1 has body A. its key is stored, then the api is called." },
+    { "t": 6.2, "text": "when the exchange completes, f1 is moved to .camel." },
+    { "t": 7.6, "text": "f2 has the same body. the key is already there, so f2 is skipped." },
+    { "t": 10.6, "text": "f3 has body B. with eager=true its key is stored before the call." },
+    { "t": 13.0, "text": "the jvm crashes before the api is called." },
+    { "t": 15.2, "text": "after the restart f3 is still in the inbox, so it is read again." },
+    { "t": 17.2, "text": "key B is already in the repository, so f3 counts as a duplicate." },
+    { "t": 18.8, "text": "f3 is moved to .camel. the api never got B, and no error is logged." },
+    { "t": 22.6, "text": "camel verify does not wait for a crash. it tries one at every step." },
+    { "t": 29.4, "text": "it explores every reachable state and keeps the shortest bad run." },
+    { "t": 32.8, "text": "the verdict names the guarantee the route really gives." },
+    { "t": 37.6, "text": "storing the key after the call (eager=false) swaps loss for a duplicate." },
+    { "t": 44.6, "text": "with an api that does not ignore repeats, no setting gives exactly-once." },
+    { "t": 47.6, "text": "camel verify tells you which one you have, before you deploy." },
+    { "t": 50.0, "text": "" }
+  ],
+  "states": 173,
+  "steps": 8,
+  "title": "camel verify",
+  "subtitle": "a proposal: model-check a camel integration for loss, duplicates and deadlock",
+  "url": "github.com/allthingssecurity/camel, branch camel-verify-proposal"
+}
