@@ -23,19 +23,3 @@ aggregate example whose README promises persistence its configuration does not h
 | [`models/`](models/) | TLA+ models of seven routes, the TLC results and the counterexample stories |
 | [`tests/`](tests/) | JUnit tests that reproduce the model results on Camel 4.23.0, with no external systems |
 | [`tools/`](tools/) | `story.py`, which turns a TLC counterexample into numbered plain-text steps |
-| [`docs/explainer/`](docs/explainer/) | the source of the animated explainer above |
-
-## The explainer
-
-It was made with the approach of
-[claude-animation-skills](https://github.com/artemnovitckii/claude-animation-skills): the words live in a spec
-(`verify-explainer.json`), the shapes and the timeline in `template.html`, and `build.py` fills one into the other to
-give `index.html`. Every frame is a pure function of time, so `render.mjs` can seek any frame, screenshot it with
-Playwright and turn the frames into a GIF with ffmpeg. The fonts are Inter and JetBrains Mono (SIL Open Font License,
-texts in `docs/explainer/fonts/`).
-
-```
-cd docs/explainer
-python3 build.py          # verify-explainer.json + template.html -> index.html
-node render.mjs           # index.html -> ../verify-explainer.gif (Playwright with Chromium, ffmpeg)
-```

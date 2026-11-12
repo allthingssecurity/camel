@@ -2,8 +2,7 @@
 
 ![Animated explainer of camel verify: a crash makes an idempotent consumer drop a file, camel verify tries a crash at every step and finds it, and the eager=true / eager=false trade-off gives at-most-once or at-least-once](docs/verify-explainer.gif)
 
-*The whole 54-second explainer above. Its source is [`docs/explainer/`](docs/explainer/) (open `index.html` locally to
-pause and scrub). The run it shows is a real counterexample from the model of section 4.1, confirmed by a test.*
+*The run it shows is a real counterexample from the model of section 4.1, confirmed by a test.*
 
 A proposal for a command that reads a user's routes, with the options of their endpoints, and checks them for
 end-to-end delivery guarantees under crashes, graceful stops and redelivery: can a message be lost, can a side effect
@@ -327,6 +326,5 @@ starts once those are done. Until then the only work on it is answering feedback
 - Models: `TLA2TOOLS=/path/to/tla2tools.jar ./models/run_all.sh` (Java 11+; prints `models/RESULTS.txt` and writes the
   stories). See [`models/README.md`](models/README.md).
 - Tests: `cd tests && ./mvnw test` (Java 17+, no external systems). See [`tests/README.md`](tests/README.md).
-- Explainer: `python3 docs/explainer/build.py`, then `node docs/explainer/render.mjs` (needs Playwright and ffmpeg).
 
 _Drafted with Claude Code on behalf of allthingssecurity_
