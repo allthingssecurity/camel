@@ -1,0 +1,3 @@
+{"_hide": ["crashes"], "Begin": "REST POST {arg}: transacted route starts", "SendJms": "to(jms:outbound)",
+ "Finish": "JPA insert, then choice(): 'fail' throws -> rollback, else commit", "Consume": "xajms consumer handles {arg} and writes the -ok row",
+ "Crash": "JVM crashes", "Restart": "application restarts"}

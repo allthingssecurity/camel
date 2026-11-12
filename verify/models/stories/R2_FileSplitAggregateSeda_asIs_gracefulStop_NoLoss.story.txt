@@ -1,0 +1,7 @@
+start: todo={}, agg={}, up=TRUE, inbox={"f1"}, cur="none", seda=<<>>, uploaded={}
+1. file consumer picks "f1" (2 books)   [todo: {} -> {"b1", "b2"}; cur: "none" -> "f1"]
+2. split part "b1" stored in the in-memory aggregation group   [todo: {"b1", "b2"} -> {"b2"}; agg: {} -> {"b1"}]
+3. split part "b2" stored in the in-memory aggregation group   [todo: {"b2"} -> {}; agg: {"b1"} -> {"b1", "b2"}]
+4. file exchange completes: file moved to .camel   [inbox: {"f1"} -> {}; cur: "f1" -> "none"]
+5. graceful stop (e.g. rolling restart)   [agg: {"b1", "b2"} -> {}; up: TRUE -> FALSE]
+6. application restarts   [up: FALSE -> TRUE]

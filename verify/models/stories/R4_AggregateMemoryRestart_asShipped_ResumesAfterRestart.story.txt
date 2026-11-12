@@ -1,0 +1,6 @@
+start: group=0, i=1, up=TRUE, entered=0, printed=<<>>
+1. user enters the next input   [group: 0 -> 1; i: 1 -> 2; entered: 0 -> 1]
+2. user enters the next input   [group: 1 -> 3; i: 2 -> 3; entered: 1 -> 3]
+3. ctrl+c (Camel stops)   [group: 3 -> 0; up: TRUE -> FALSE]
+4. example started again   [up: FALSE -> TRUE]
+5. user enters the next input   [i: 3 -> 4; entered: 3 -> 0; printed: <<>> -> <<0>>]

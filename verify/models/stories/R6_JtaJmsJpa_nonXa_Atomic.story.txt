@@ -1,0 +1,9 @@
+start: audit={}, sentTx=FALSE, st="idle", req={"ok1", "fail1"}, up=TRUE, cur="none", queue={}
+1. REST POST "ok1": transacted route starts   [st: "idle" -> "begun"; cur: "none" -> "ok1"]
+2. to(jms:outbound)   [st: "begun" -> "sent"; queue: {} -> {"ok1"}]
+3. xajms consumer handles "ok1" and writes the -ok row   [audit: {} -> {<<"ok1", "ok">>}; queue: {"ok1"} -> {}]
+4. JPA insert, then choice(): 'fail' throws -> rollback, else commit   [audit: {<<"ok1", "ok">>} -> {<<"ok1", "in">>, <<"ok1", "ok">>}; st: "sent" -> "idle"; req: {"ok1", "fail1"} -> {"fail1"}; cur: "ok1" -> "none"]
+5. REST POST "fail1": transacted route starts   [st: "idle" -> "begun"; cur: "none" -> "fail1"]
+6. to(jms:outbound)   [st: "begun" -> "sent"; queue: {} -> {"fail1"}]
+7. xajms consumer handles "fail1" and writes the -ok row   [audit: {<<"ok1", "in">>, <<"ok1", "ok">>} -> {<<"ok1", "in">>, <<"ok1", "ok">>, <<"fail1", "ok">>}; queue: {"fail1"} -> {}]
+8. JPA insert, then choice(): 'fail' throws -> rollback, else commit   [st: "sent" -> "idle"; req: {"fail1"} -> {}; cur: "fail1" -> "none"]

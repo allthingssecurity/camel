@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>camelverify</groupId>
+  <artifactId>camel-verify-confirmation-tests</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <!-- confirmation tests for the camel verify models: released Camel 4.23.0, no external systems -->
+  <properties>
+    <camel.version>4.23.0</camel.version>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.apache.camel</groupId>
+        <artifactId>camel-bom</artifactId>
+        <version>${camel.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency><groupId>org.apache.camel</groupId><artifactId>camel-core</artifactId></dependency>
+    <dependency><groupId>org.apache.camel</groupId><artifactId>camel-sql</artifactId></dependency>
+    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><version>2.5.252</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId><version>2.0.17</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-engine</artifactId><version>5.14.4</version><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId><version>5.14.4</version><scope>test</scope></dependency>
+    <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><version>3.27.7</version><scope>test</scope></dependency>
+    <dependency><groupId>org.awaitility</groupId><artifactId>awaitility</artifactId><version>4.3.0</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.4</version>
+        <configuration>
+          <redirectTestOutputToFile>true</redirectTestOutputToFile>
+          <forkCount>1</forkCount>
+          <argLine>-Xmx512m</argLine>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

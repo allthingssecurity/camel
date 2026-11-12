@@ -1,0 +1,2 @@
+{"Take": "instance/item {arg} taken from the input queue", "Read": "instance {arg} reads the stored group (and its version)",
+ "Write": "instance {arg} writes the aggregated group (version-checked)"}

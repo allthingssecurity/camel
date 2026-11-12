@@ -1,0 +1,10 @@
+start: pos=0, done=0, up=TRUE, committed=0, seda=<<>>, delivered={}
+1. Kafka consumer polls the next record (auto-commit may commit the previous position)   [pos: 0 -> 1]
+2. route hands the record to seda:kafka-messages; exchange done   [done: 0 -> 1; seda: <<>> -> <<0>>]
+3. Kafka consumer polls the next record (auto-commit may commit the previous position)   [pos: 1 -> 2]
+4. route hands the record to seda:kafka-messages; exchange done   [done: 1 -> 2; seda: <<0>> -> <<0, 1>>]
+5. Kafka consumer polls the next record (auto-commit may commit the previous position)   [pos: 2 -> 3]
+6. route hands the record to seda:kafka-messages; exchange done   [done: 2 -> 3; seda: <<0, 1>> -> <<0, 1, 2>>]
+7. idle poll: auto-commit of the position   [committed: 0 -> 3]
+8. JVM crashes   [up: TRUE -> FALSE; seda: <<0, 1, 2>> -> <<>>]
+9. application restarts from the committed offset   [up: FALSE -> TRUE]

@@ -1,0 +1,7 @@
+{"_hide": ["crashes", "failures"],
+ "Poll": "file consumer picks {arg}; idempotent consumer checks its body",
+ "CallOk": "the costly HTTP API is called",
+ "CallFails": "HTTP call fails: key removed (removeOnFailure), file left for retry",
+ "Complete": "exchange completes: file moved to .camel",
+ "Crash": "JVM crashes",
+ "Restart": "application restarts"}

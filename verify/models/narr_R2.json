@@ -1,0 +1,5 @@
+{"_hide": ["crashes", "stops"],
+ "Poll": "file consumer picks {arg} (2 books)", "SplitPart": "split part {arg} stored in the in-memory aggregation group",
+ "FileDone": "file exchange completes: file moved to .camel", "IntervalComplete": "completionInterval fires: group completed",
+ "SedaUpload": "seda route uploads a group to sftp", "Crash": "JVM crashes", "GracefulStop": "graceful stop (e.g. rolling restart)",
+ "Restart": "application restarts"}

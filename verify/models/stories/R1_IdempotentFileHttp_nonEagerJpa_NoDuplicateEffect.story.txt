@@ -1,0 +1,7 @@
+start: st="idle", up=TRUE, inbox={"f1", "f2", "f3"}, calls=[B |-> 0, A |-> 0], cur="none", repo={}
+1. file consumer picks "f1"; idempotent consumer checks its body   [st: "idle" -> "keyed"; cur: "none" -> "f1"]
+2. the costly HTTP API is called   [st: "keyed" -> "called"; calls: [B |-> 0, A |-> 0] -> [B |-> 0, A |-> 1]]
+3. JVM crashes   [st: "called" -> "idle"; up: TRUE -> FALSE; cur: "f1" -> "none"]
+4. application restarts   [up: FALSE -> TRUE]
+5. file consumer picks "f1"; idempotent consumer checks its body   [st: "idle" -> "keyed"; cur: "none" -> "f1"]
+6. the costly HTTP API is called   [st: "keyed" -> "called"; calls: [B |-> 0, A |-> 1] -> [B |-> 0, A |-> 2]]

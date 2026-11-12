@@ -1,0 +1,8 @@
+{
+ "Send": "client sends {arg}: caller waits for the seda reply",
+ "Take": "seda consumer thread {arg} takes the next exchange",
+ "Step": "route on that thread calls seda:input InOut and blocks for the reply (cycle variant) / replies",
+ "Resume": "nested call answered, route resumes",
+ "Finish": "route replies",
+ "Next": "route on that seda thread calls seda:input InOut and blocks for the nested reply (TLC labels this step 'Next')"
+}

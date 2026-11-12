@@ -1,0 +1,5 @@
+{"_hide": ["crashes", "stops"],
+ "Poll": "Kafka consumer polls the next record (auto-commit may commit the previous position)",
+ "Process": "route hands the record to seda:kafka-messages; exchange done", "IdlePoll": "idle poll: auto-commit of the position",
+ "RestGet": "REST GET takes one message from seda", "Crash": "JVM crashes", "GracefulStop": "graceful stop: consumer.close() commits the position",
+ "Restart": "application restarts from the committed offset"}

@@ -1,0 +1,5 @@
+start: replied={}, busy={}, queue=<<>>
+1. client sends "r1": caller waits for the seda reply   [queue: <<>> -> <<<<"r1", 0>>>>]
+2. client sends "r2": caller waits for the seda reply   [queue: <<<<"r1", 0>>>> -> <<<<"r1", 0>>, <<"r2", 0>>>>]
+3. seda consumer thread 1 takes the next exchange   [busy: {} -> {<<1, <<"r1", 0>>, "run">>}; queue: <<<<"r1", 0>>, <<"r2", 0>>>> -> <<<<"r2", 0>>>>]
+4. route on that seda thread calls seda:input InOut and blocks for the nested reply (TLC labels this step 'Next')   [busy: {<<1, <<"r1", 0>>, "run">>} -> {<<1, <<"r1", 0>>, "wait">>}; queue: <<<<"r2", 0>>>> -> <<<<"r2", 0>>, <<"r1", 1>>>>]
