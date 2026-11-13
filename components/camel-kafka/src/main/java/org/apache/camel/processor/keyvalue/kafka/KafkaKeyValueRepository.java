@@ -349,6 +349,13 @@ public class KafkaKeyValueRepository extends ServiceSupport implements KeyValueR
         }
         byte action = data[0];
         String key = record.key();
+        if (key == null && (action == ACTION_PUT || action == ACTION_DELETE)) {
+            // the repository never writes such a record (the cache refuses a null key first); applied, it would fail
+            // the start, or the rest of the poll
+            LOG.warn("Put or delete record without a key on topic:{}, partition:{}, offset:{}. Ignoring.",
+                    record.topic(), record.partition(), record.offset());
+            return;
+        }
         if (action == ACTION_PUT) {
             if (data.length < 10) {
                 LOG.warn("Malformed put record on topic:{}, partition:{}, offset:{}. Ignoring.",
@@ -356,7 +363,21 @@ public class KafkaKeyValueRepository extends ServiceSupport implements KeyValueR
                 return;
             }
             long expiresAt = deserializeExpiresAt(data);
-            Object value = deserializeValue(data);
+            Object value;
+            try {
+                value = deserializeValue(data);
+            } catch (RuntimeCamelException e) {
+                // such as a class that is not on the classpath of this application, or that the deserialization filter
+                // does not allow: the topic has replaced the value of the key with one that cannot be read here, so
+                // remove the key rather than keep the replaced value
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                LOG.warn("Cannot read the value of the put record for key:{} on topic:{}, partition:{}, offset:{} due to: {}."
+                         + " Ignoring the record, and removing the key from the cache.",
+                        key, record.topic(), record.partition(), record.offset(), cause.toString());
+                LOG.debug("Cannot read the value of the put record for key:{}", key, e);
+                cache.remove(key);
+                return;
+            }
             LOG.debug("Adding to cache key:{}", key);
             cache.put(key, new CacheEntry(value, expiresAt));
         } else if (action == ACTION_DELETE) {

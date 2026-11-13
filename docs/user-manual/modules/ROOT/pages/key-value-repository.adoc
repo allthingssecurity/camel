@@ -182,6 +182,8 @@ repo.setTopic("camel-kvr");  // optional
 
 Entries are replayed from the topic on startup into an in-memory `ConcurrentHashMap` cache.
 TTL is stored as an epoch-millis timestamp in the value envelope.
+A put whose value cannot be deserialized (a class that is not on the classpath, or that the
+`deserializationFilter` does not allow) is skipped with a WARN, and its key is removed from the cache.
 
 === Caffeine
 
