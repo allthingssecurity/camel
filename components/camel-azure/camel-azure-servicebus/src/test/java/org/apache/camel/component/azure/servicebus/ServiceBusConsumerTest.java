@@ -766,6 +766,42 @@ public class ServiceBusConsumerTest {
     }
 
     @Test
+    void lockRenewerRenewsEarlyEnoughToRetryATransientErrorBeforeTheLockExpires() throws Exception {
+        when(configuration.getServiceBusReceiveMode()).thenReturn(ServiceBusReceiveMode.PEEK_LOCK);
+        when(configuration.getMaxAutoLockRenewDuration()).thenReturn(300000L);
+        when(messageContext.getMessage()).thenReturn(message);
+        ServiceBusException busy = new ServiceBusException(
+                new AmqpException(true, AmqpErrorCondition.SERVER_BUSY_ERROR, "server busy", null),
+                ServiceBusErrorSource.RENEW_LOCK);
+        when(renewalClient.renewMessageLock(any(ServiceBusReceivedMessage.class)))
+                .thenReturn(Mono.error(busy))
+                .thenReturn(Mono.just(OffsetDateTime.now().plusSeconds(30)));
+        try (ServiceBusConsumer consumer = new ServiceBusConsumer(endpoint, processor)) {
+            consumer.doStart();
+
+            ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.captor();
+            ArgumentCaptor<Long> periodCaptor = ArgumentCaptor.captor();
+            verify(periodTaskScheduler).schedulePeriodTask(taskCaptor.capture(), periodCaptor.capture());
+            long periodMillis = periodCaptor.getValue();
+
+            // a lock of 30 seconds, renewed 8 seconds ago: it expires in 22 seconds, two of the longest gaps between
+            // two runs (the period task scheduler ticks once per second). Waiting for the next run to renew it leaves
+            // no run to retry a transient error of that renewal before the lock expires
+            when(message.getLockedUntil())
+                    .thenReturn(OffsetDateTime.now().plus(Duration.ofMillis(2 * (periodMillis + 1000))));
+            processMessageCaptor.getValue().accept(messageContext);
+
+            // this run renews the lock, and the renewal fails with a transient error
+            taskCaptor.getValue().run();
+            verify(renewalClient, times(1)).renewMessageLock(message);
+
+            // the next run comes at most periodMillis + 1 second later, while the lock is still held: it renews again
+            taskCaptor.getValue().run();
+            verify(renewalClient, times(2)).renewMessageLock(message);
+        }
+    }
+
+    @Test
     void lockRenewerStopsAfterTheLockIsLost() throws Exception {
         when(configuration.getServiceBusReceiveMode()).thenReturn(ServiceBusReceiveMode.PEEK_LOCK);
         when(configuration.getMaxAutoLockRenewDuration()).thenReturn(300000L);
