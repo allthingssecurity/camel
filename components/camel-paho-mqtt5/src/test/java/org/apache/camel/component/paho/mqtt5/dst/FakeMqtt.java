@@ -363,6 +363,8 @@ final class FakeMqtt {
         private boolean everReconnected;
         private boolean disconnectedByUser;
         private boolean connecting;
+        // counts the forced disconnects: a connect that was in progress when one came fails
+        private int forcedDisconnects;
         private boolean hung;
         // [P] CommsCallback: the callback thread, its target and current state, and its queue of received messages
         private boolean callbackTarget;
@@ -416,9 +418,14 @@ final class FakeMqtt {
             Integer rm = options.getReceiveMaximum();
             receiveMaximum = rm == null ? 65535 : rm;
             connecting = true;
+            int forced = forcedDisconnects;
             boolean present;
             try {
                 dst.block(latency(), "connect");
+                if (forced != forcedDisconnects) {
+                    // [P] the forced disconnect shut the connection down: the connect fails
+                    throw new MqttException(MqttClientException.REASON_CODE_CONNECTION_LOST);
+                }
                 present = connectToBroker();
             } finally {
                 connecting = false;
@@ -429,7 +436,7 @@ final class FakeMqtt {
             // reconnect cycle sets is not cleared (MqttAsyncClient 1.2.5)
             boolean reconnect = everReconnected;
             callbackTask("connectComplete", () -> callback.connectComplete(reconnect, URI));
-            return token(present);
+            return token(present, 0);
         }
 
         @Override
@@ -457,7 +464,8 @@ final class FakeMqtt {
             onSubscribed.run();
             dst.trace("mqtt: subscribed with QoS " + qos);
             pump();
-            return token(false);
+            // [P] the SUBACK grants the QoS asked for (the fake broker refuses no subscription)
+            return token(false, qos);
         }
 
         @Override
@@ -487,6 +495,24 @@ final class FakeMqtt {
             reconnectCycle = false;
             closeConnection(this);
             dst.block(latency(), "disconnect");
+        }
+
+        /**
+         * [P] ClientComms.disconnectForcibly: sets DISCONNECTING whatever the state and shuts the connection down, so a
+         * connect in progress fails and the client is DISCONNECTED (a close no longer fails with 32110). Only the case
+         * the consumer uses is modelled: no DISCONNECT packet, on a client that is connecting or disconnected.
+         */
+        @Override
+        public void disconnectForcibly(long quiesceTimeout, long disconnectTimeout, boolean sendDisconnect)
+                throws MqttException {
+            checkOpen();
+            if (connectedFlag || sendDisconnect) {
+                violations.add("not modelled: disconnectForcibly of a connected client or with a DISCONNECT packet");
+                throw new UnsupportedOperationException("disconnectForcibly");
+            }
+            dst.trace("mqtt: disconnectForcibly" + (connecting ? ", the connect in progress fails" : ""));
+            forcedDisconnects++;
+            connecting = false;
         }
 
         boolean isClosed() {
@@ -701,9 +727,10 @@ final class FakeMqtt {
                     return;
                 }
                 connecting = true;
+                int forced = forcedDisconnects;
                 try {
                     dst.block(latency(), "reconnect");
-                    if (connectedFlag || closed || disconnectedByUser) {
+                    if (connectedFlag || closed || disconnectedByUser || forced != forcedDisconnects) {
                         return;
                     }
                     connectToBroker();
@@ -720,10 +747,11 @@ final class FakeMqtt {
             });
         }
 
-        private IMqttToken token(boolean present) {
+        private IMqttToken token(boolean present, int reasonCode) {
             return (IMqttToken) Proxy.newProxyInstance(IMqttToken.class.getClassLoader(), new Class<?>[] { IMqttToken.class },
                     (p, method, args) -> switch (method.getName()) {
                         case "getSessionPresent" -> present;
+                        case "getReasonCodes" -> new int[] { reasonCode };
                         case "isComplete" -> true;
                         case "toString" -> "FakeMqtt.token";
                         case "hashCode" -> System.identityHashCode(p);
