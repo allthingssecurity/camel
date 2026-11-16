@@ -200,14 +200,18 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
             while (isRunAllowed()) {
 
                 byte[] data = null;
-                try {
-                    data = is.readAllBytes();
-                } catch (IOException e) {
-                    // ignore
+                if (is != null) {
+                    try {
+                        data = is.readAllBytes();
+                    } catch (IOException e) {
+                        // ignore
+                    }
                 }
                 boolean eos = data == null || data.length == 0;
 
-                if (isRunAllowed() && endpoint.isRetry()) {
+                if (!eos && isRunAllowed()) {
+                    index = processRaw(data, index);
+                } else if (eos && isRunAllowed() && endpoint.isRetry()) {
                     boolean reOpen = true;
                     if (endpoint.isFileWatcher()) {
                         reOpen = watchFileChanged;
@@ -250,7 +254,7 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
                 }
                 eos = data == null || data.length == 0;
                 if (!eos) {
-                    processRaw(data, index);
+                    index = processRaw(data, index);
                 }
             }
         }
