@@ -86,8 +86,8 @@ public class SmppProducer extends DefaultProducer {
 
     @Override
     protected void doStart() throws Exception {
-        super.doStart();
         restartReconnectService();
+        super.doStart();
 
         if (!getConfiguration().isLazySessionCreation()) {
             if (connectLock.tryLock()) {
