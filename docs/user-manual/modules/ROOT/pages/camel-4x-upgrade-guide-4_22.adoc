@@ -227,6 +227,17 @@ left a directory named after the part before it. A NUL character failed the exch
 OpenSSH server before 10.6, cut the name short there. Remove or replace these characters in the `CamelFileName` header
 or in the `fileName` option before the message reaches the producer.
 
+=== camel-kafka - breakOnFirstError: a failed commit before the break goes to the exception handler
+
+With `breakOnFirstError=true`, the commit before the break on a failed record can fail or time out (for example a
+`TimeoutException` of `commitSync` with the `SyncCommitManager`). The consumer now reports that failure to its
+`ExceptionHandler` and still breaks out, polling again from the last committed offset.
+Before, the commit failure went to the `pollOnError` strategy. With `ERROR_HANDLER` (the default), `DISCARD` or
+`RETRY`, the failed record and the rest of the poll were skipped.
+The failure no longer reaches the error handler of the route (such as an `onException` that caught commit timeouts)
+unless `bridgeErrorHandler=true`. With `pollOnError=STOP`, the consumer now reconnects in this case instead of
+stopping.
+
 == Upgrading from 4.22.1 to 4.22.2
 
 === camel-management - Route group exchange counters count once per entry into the group again
