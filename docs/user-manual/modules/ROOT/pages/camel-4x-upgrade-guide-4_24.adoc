@@ -6894,7 +6894,9 @@ again by the next poll. A route that removed these headers, or replaced the mess
 
 With `moveAfterRead` and `deleteAfterRead`, the `hwcloud-obs` consumer now copies and deletes the object it consumed.
 Before, it took the bucket and the key from the `CamelHwCloudObsBucketName` and `CamelHwCloudObsObjectKey` headers as
-the route left them, with the same effects.
+the route left them: a route that changed them copied and deleted another object, and a route that removed them, or
+replaced the message, copied and deleted nothing, so the consumed object was consumed again by the next poll. (The
+`hwcloud-obs` producer takes its bucket from the exchange property of that name, not from the header.)
 
 === camel-mongodb - connectionUriString without hosts creates the client of the endpoint
 

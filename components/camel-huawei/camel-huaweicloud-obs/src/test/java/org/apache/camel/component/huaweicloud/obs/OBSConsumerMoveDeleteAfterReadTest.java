@@ -73,7 +73,7 @@ class OBSConsumerMoveDeleteAfterReadTest extends CamelTestSupport {
         // consumed once: deleted, so the later polls must not route it again
         mock.setAssertPeriod(500);
 
-        // as a route does that writes a copy of the object to another bucket with the producer
+        // a route that changes the bucket and key headers (for example for a later step of the route)
         context.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
