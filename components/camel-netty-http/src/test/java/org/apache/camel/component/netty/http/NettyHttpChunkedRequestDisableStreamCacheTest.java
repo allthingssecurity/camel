@@ -32,6 +32,7 @@ import static org.apache.camel.component.netty.http.RawHttpClient.chunkedPost;
 import static org.apache.camel.component.netty.http.RawHttpClient.get;
 import static org.apache.camel.component.netty.http.RawHttpClient.send;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * With disableStreamCache=true, the server of a netty-http endpoint streams the body of a chunked request to the route.
@@ -81,6 +82,40 @@ class NettyHttpChunkedRequestDisableStreamCacheTest extends BaseNettyTestSupport
     }
 
     @Test
+    void testChunkedRequestBodySentBack() throws Exception {
+        try (RawHttpClient client = new RawHttpClient(getPort())) {
+            // two requests on the same connection
+            for (int i = 0; i < 2; i++) {
+                Response response = client.send(chunkedPost("/echo", "Hello ", "World"));
+                assertEquals("HTTP/1.1 200 OK", response.status());
+                assertEquals("Hello World", response.body());
+            }
+        }
+    }
+
+    @Test
+    void testChunkedRequestBodySentBackBeforeReceived() throws Exception {
+        try (RawHttpClient client = new RawHttpClient(getPort())) {
+            // only the first chunk is sent: the reply cannot wait for the rest of the body on the I/O thread that
+            // receives it, so the reply fails, and the connection is closed instead of waiting for the rest
+            assertTrue(client.sendAndAwaitClose(
+                    "POST /echo HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nHello \r\n"));
+        }
+
+        assertEquals("HTTP/1.1 200 OK", send(getPort(), get("/hello")).status());
+    }
+
+    @Test
+    void testChunkedRequestRouteFailsWithoutReadingBody() throws Exception {
+        try (RawHttpClient client = new RawHttpClient(getPort())) {
+            assertEquals("HTTP/1.1 500 Internal Server Error", client.send(chunkedPost("/fail", CHUNKS)).status());
+
+            // the rest of the body is discarded, and the next request on the connection is answered
+            assertEquals("HTTP/1.1 200 OK", client.send(get("/hello")).status());
+        }
+    }
+
+    @Test
     void testChunkedRequestUnknownPath() throws Exception {
         assertEquals("HTTP/1.1 404 Not Found", send(getPort(), chunkedPost("/unknown", 4)).status());
 
@@ -116,6 +151,15 @@ class NettyHttpChunkedRequestDisableStreamCacheTest extends BaseNettyTestSupport
                 from("netty-http:http://localhost:" + getPort() + "/noread" + options)
                         .noStreamCaching()
                         .transform().constant("ok");
+
+                // the reply sends the body back as it was received
+                from("netty-http:http://localhost:" + getPort() + "/echo" + options)
+                        .noStreamCaching()
+                        .log("Sending the body back");
+
+                from("netty-http:http://localhost:" + getPort() + "/fail" + options)
+                        .noStreamCaching()
+                        .throwException(new IllegalStateException("Forced"));
 
                 from("netty-http:http://localhost:" + getPort() + "/hello" + options)
                         .transform().constant("hello");

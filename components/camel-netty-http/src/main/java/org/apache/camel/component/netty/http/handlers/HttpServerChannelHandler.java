@@ -16,6 +16,7 @@
  */
 package org.apache.camel.component.netty.http.handlers;
 
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.channels.ClosedChannelException;
 import java.nio.charset.StandardCharsets;
@@ -54,6 +55,7 @@ import org.apache.camel.component.netty.http.NettyHttpConstants;
 import org.apache.camel.component.netty.http.NettyHttpConsumer;
 import org.apache.camel.component.netty.http.NettyHttpHelper;
 import org.apache.camel.component.netty.http.NettyHttpSecurityConfiguration;
+import org.apache.camel.component.netty.http.OutboundStreamHttpResponse;
 import org.apache.camel.component.netty.http.SecurityAuthenticator;
 import org.apache.camel.http.base.OAuthHttpSecuritySupport;
 import org.apache.camel.http.base.OAuthHttpSecuritySupport.Validation;
@@ -81,6 +83,10 @@ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 public class HttpServerChannelHandler extends ServerChannelHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(HttpServerChannelHandler.class);
+
+    // internal exchange property: the body of a reply that is streamed by the outbound streamer, which reads it after
+    // the exchange is done
+    private static final String REPLY_STREAM = "CamelNettyHttpReplyStream";
 
     // whether the basic auth credential of the request being read has been checked by Camel, so that beforeProcess
     // (called by channelRead0 of the super class on the same thread) removes the Authorization header from the message
@@ -497,8 +503,13 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
     @Override
     protected Object getResponseBody(Exchange exchange) throws Exception {
         try {
-            return consumer.getEndpoint().getNettyHttpBinding().toNettyResponse(exchange.getMessage(),
+            HttpResponse response = consumer.getEndpoint().getNettyHttpBinding().toNettyResponse(exchange.getMessage(),
                     consumer.getConfiguration());
+            if (response instanceof OutboundStreamHttpResponse) {
+                // the outbound streamer writes the stream of the body, and closes it once written or failed
+                exchange.setProperty(REPLY_STREAM, exchange.getMessage().getBody());
+            }
+            return response;
         } catch (Exception e) {
             // no response can be built from the message, so answer with a 500, otherwise the client gets no response
             // and waits for one forever (if not timing out)
@@ -543,10 +554,15 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
             in = consumer.getEndpoint().getNettyHttpBinding().toCamelMessage(request, exchange, consumer.getConfiguration());
             // close the body stream when the exchange is done, so the part of the body that the route did not read is
             // discarded, and the connection is read again
+            InputStream body = request.getInputStream();
             exchange.getExchangeExtension().addOnCompletion(new SynchronizationAdapter() {
                 @Override
                 public void onDone(Exchange exchange) {
-                    IOHelper.close(request.getInputStream());
+                    // unless the reply sends the body back: the outbound streamer reads it after the exchange is done,
+                    // and closes it once written or failed
+                    if (exchange.getProperty(REPLY_STREAM) != body) {
+                        IOHelper.close(body);
+                    }
                 }
             });
         }

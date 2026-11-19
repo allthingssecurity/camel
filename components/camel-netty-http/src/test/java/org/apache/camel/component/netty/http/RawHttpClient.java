@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -56,6 +57,25 @@ final class RawHttpClient implements AutoCloseable {
             return readResponse();
         } catch (SocketTimeoutException e) {
             return new Response("NO-RESPONSE", Map.of(), "");
+        }
+    }
+
+    /**
+     * Sends the request and reads until the connection is closed. Returns false when the connection is not closed
+     * within the timeout.
+     */
+    boolean sendAndAwaitClose(String request) throws IOException {
+        OutputStream out = socket.getOutputStream();
+        out.write(request.getBytes(StandardCharsets.US_ASCII));
+        out.flush();
+        try {
+            in.readAllBytes();
+            return true;
+        } catch (SocketTimeoutException e) {
+            return false;
+        } catch (SocketException e) {
+            // the connection was reset
+            return true;
         }
     }
 

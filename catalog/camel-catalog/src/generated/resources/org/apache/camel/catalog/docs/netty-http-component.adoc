@@ -34,7 +34,8 @@ which is safe to be re-read multiple times.
 On the consumer, the body of a chunked request is an `InputStream` only when the route runs on the executor
 service (`usingExecutorService=true`, the default), as the body cannot be received while the route waits for it
 on the I/O thread; otherwise the request is aggregated as any other. The stream is closed when the exchange is done,
-and the part of the body that the route did not read is discarded.
+and the part of the body that the route did not read is discarded. A reply whose body is that stream (the request body
+sent back) closes it once written; it reads the stream on the I/O thread, so the body must be received already.
 ====
 
 Maven users will need to add the following dependency to their `pom.xml`
