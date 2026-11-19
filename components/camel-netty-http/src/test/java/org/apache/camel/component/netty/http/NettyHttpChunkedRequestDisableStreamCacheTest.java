@@ -16,7 +16,10 @@
  */
 package org.apache.camel.component.netty.http;
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.camel.StreamCache;
@@ -94,6 +97,31 @@ class NettyHttpChunkedRequestDisableStreamCacheTest extends BaseNettyTestSupport
     }
 
     @Test
+    void testChunkedRequestBodySentBackInAnotherStream() throws Exception {
+        try (RawHttpClient client = new RawHttpClient(getPort())) {
+            // two requests on the same connection
+            for (int i = 0; i < 2; i++) {
+                Response response = client.send(chunkedPost("/wrap", "Hello ", "World"));
+                assertEquals("HTTP/1.1 200 OK", response.status());
+                assertEquals("Hello World", response.body());
+            }
+        }
+    }
+
+    @Test
+    void testChunkedRequestStreamedReplyWithoutReadingBody() throws Exception {
+        try (RawHttpClient client = new RawHttpClient(getPort())) {
+            Response response = client.send(chunkedPost("/stream", CHUNKS));
+            assertEquals("HTTP/1.1 200 OK", response.status());
+            assertEquals("streamed", response.body());
+
+            // the rest of the body is discarded once the reply is written, and the next request on the connection is
+            // answered
+            assertEquals("HTTP/1.1 200 OK", client.send(get("/hello")).status());
+        }
+    }
+
+    @Test
     void testChunkedRequestBodySentBackBeforeReceived() throws Exception {
         try (RawHttpClient client = new RawHttpClient(getPort())) {
             // only the first chunk is sent: the reply cannot wait for the rest of the body on the I/O thread that
@@ -156,6 +184,18 @@ class NettyHttpChunkedRequestDisableStreamCacheTest extends BaseNettyTestSupport
                 from("netty-http:http://localhost:" + getPort() + "/echo" + options)
                         .noStreamCaching()
                         .log("Sending the body back");
+
+                // the reply sends the body back in another stream
+                from("netty-http:http://localhost:" + getPort() + "/wrap" + options)
+                        .noStreamCaching()
+                        .process(e -> e.getMessage().setBody(
+                                new BufferedInputStream(e.getMessage().getBody(InputStream.class))));
+
+                // the reply is streamed, and the route does not read the body
+                from("netty-http:http://localhost:" + getPort() + "/stream" + options)
+                        .noStreamCaching()
+                        .process(e -> e.getMessage().setBody(
+                                new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8))));
 
                 from("netty-http:http://localhost:" + getPort() + "/fail" + options)
                         .noStreamCaching()

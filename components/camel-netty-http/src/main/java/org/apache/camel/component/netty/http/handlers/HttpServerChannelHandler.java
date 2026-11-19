@@ -29,16 +29,21 @@ import javax.security.auth.Subject;
 import javax.security.auth.login.LoginException;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.DecoderResult;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.DefaultHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpUtil;
+import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.AttributeKey;
 import org.apache.camel.Exchange;
@@ -84,8 +89,8 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(HttpServerChannelHandler.class);
 
-    // internal exchange property: the body of a reply that is streamed by the outbound streamer, which reads it after
-    // the exchange is done
+    // internal exchange property: the reply that is streamed by the outbound streamer, which reads it after the exchange
+    // is done
     private static final String REPLY_STREAM = "CamelNettyHttpReplyStream";
 
     // whether the basic auth credential of the request being read has been checked by Camel, so that beforeProcess
@@ -505,9 +510,12 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
         try {
             HttpResponse response = consumer.getEndpoint().getNettyHttpBinding().toNettyResponse(exchange.getMessage(),
                     consumer.getConfiguration());
-            if (response instanceof OutboundStreamHttpResponse) {
-                // the outbound streamer writes the stream of the body, and closes it once written or failed
-                exchange.setProperty(REPLY_STREAM, exchange.getMessage().getBody());
+            if (response instanceof OutboundStreamHttpResponse reply) {
+                // the outbound streamer writes the body of the reply after the exchange is done, and may read the body
+                // stream of the request (sent back, as it is or in another stream), which is then closed with the reply
+                StreamedReply streamedReply = new StreamedReply(reply);
+                exchange.setProperty(REPLY_STREAM, streamedReply);
+                return streamedReply;
             }
             return response;
         } catch (Exception e) {
@@ -558,9 +566,12 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
             exchange.getExchangeExtension().addOnCompletion(new SynchronizationAdapter() {
                 @Override
                 public void onDone(Exchange exchange) {
-                    // unless the reply sends the body back: the outbound streamer reads it after the exchange is done,
-                    // and closes it once written or failed
-                    if (exchange.getProperty(REPLY_STREAM) != body) {
+                    // unless the reply is streamed: the outbound streamer writes it after the exchange is done, and it may
+                    // read the body, so the body stream is closed with the reply
+                    StreamedReply reply = exchange.getProperty(REPLY_STREAM, StreamedReply.class);
+                    if (reply != null) {
+                        reply.closeWith(body);
+                    } else {
                         IOHelper.close(body);
                     }
                 }
@@ -580,5 +591,95 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
         }
 
         return exchange;
+    }
+
+    /**
+     * A streamed reply that closes the body stream of the request with it. The outbound streamer closes the reply once
+     * it is written, when the write fails, or when the connection is closed. Everything else is the reply as built by
+     * the binding.
+     */
+    private static final class StreamedReply extends OutboundStreamHttpResponse {
+        private final OutboundStreamHttpResponse reply;
+        private boolean closed;
+        private InputStream requestStream;
+
+        StreamedReply(OutboundStreamHttpResponse reply) {
+            super(InputStream.nullInputStream(), reply);
+            this.reply = reply;
+        }
+
+        /**
+         * Closes the body stream of the request when the reply is closed, or now if the reply is closed already.
+         */
+        void closeWith(InputStream stream) {
+            synchronized (this) {
+                if (!closed) {
+                    requestStream = stream;
+                    return;
+                }
+            }
+            IOHelper.close(stream);
+        }
+
+        @Override
+        public HttpVersion protocolVersion() {
+            return reply.protocolVersion();
+        }
+
+        @Override
+        public HttpResponseStatus status() {
+            return reply.status();
+        }
+
+        @Override
+        public HttpHeaders headers() {
+            return reply.headers();
+        }
+
+        @Override
+        public DefaultHttpResponse getResponse() {
+            return reply.getResponse();
+        }
+
+        @Override
+        public boolean isEndOfInput() throws Exception {
+            return reply.isEndOfInput();
+        }
+
+        @Override
+        public void close() throws Exception {
+            InputStream stream;
+            synchronized (this) {
+                closed = true;
+                stream = requestStream;
+                requestStream = null;
+            }
+            try {
+                reply.close();
+            } finally {
+                IOHelper.close(stream);
+            }
+        }
+
+        @Override
+        @Deprecated
+        public HttpContent readChunk(ChannelHandlerContext ctx) throws Exception {
+            return reply.readChunk(ctx);
+        }
+
+        @Override
+        public HttpContent readChunk(ByteBufAllocator allocator) throws Exception {
+            return reply.readChunk(allocator);
+        }
+
+        @Override
+        public long length() {
+            return reply.length();
+        }
+
+        @Override
+        public long progress() {
+            return reply.progress();
+        }
     }
 }
