@@ -60,7 +60,9 @@ import org.apache.camel.http.base.OAuthHttpSecuritySupport.Validation;
 import org.apache.camel.spi.CamelLogger;
 import org.apache.camel.support.ExceptionHelper;
 import org.apache.camel.support.ObjectHelper;
+import org.apache.camel.support.SynchronizationAdapter;
 import org.apache.camel.support.TlsPeerCertificateSupport;
+import org.apache.camel.util.IOHelper;
 import org.apache.camel.util.StringHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -539,6 +541,14 @@ public class HttpServerChannelHandler extends ServerChannelHandler {
         } else {
             InboundStreamHttpRequest request = (InboundStreamHttpRequest) message;
             in = consumer.getEndpoint().getNettyHttpBinding().toCamelMessage(request, exchange, consumer.getConfiguration());
+            // close the body stream when the exchange is done, so the part of the body that the route did not read is
+            // discarded, and the connection is read again
+            exchange.getExchangeExtension().addOnCompletion(new SynchronizationAdapter() {
+                @Override
+                public void onDone(Exchange exchange) {
+                    IOHelper.close(request.getInputStream());
+                }
+            });
         }
         exchange.setIn(in);
 
