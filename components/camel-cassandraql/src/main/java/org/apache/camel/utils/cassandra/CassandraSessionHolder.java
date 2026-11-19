@@ -33,7 +33,9 @@ public class CassandraSessionHolder {
 
     public CassandraSessionHolder(CqlSession session) {
         this.session = session;
-        this.managedSession = false;
+        // the session is given, so it is managed outside: it can be used by others (such as cql endpoints, or other
+        // repositories), and the repository can be started again after a stop, so the stop must not close it
+        this.managedSession = true;
     }
 
     public void start() {
