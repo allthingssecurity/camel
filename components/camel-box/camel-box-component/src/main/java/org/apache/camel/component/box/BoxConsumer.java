@@ -64,6 +64,18 @@ public class BoxConsumer extends AbstractApiConsumer<BoxApiName, BoxConfiguratio
         propertyNames.add(LISTENER_PROPERTY);
     }
 
+    /**
+     * The events are received from the event stream that {@link #doStart()} listens to, not polled: a poll of the API
+     * consumer would call the listen method again without this consumer as listener (which does nothing and returns no
+     * result), and route an exchange with no body for that result, on every poll.
+     */
+    @Override
+    protected int poll() throws Exception {
+        // the event stream is listened to, so the consumer is ready
+        forceConsumerAsReady();
+        return 0;
+    }
+
     @Override
     public void onEvent(BoxEvent event) {
         try {
