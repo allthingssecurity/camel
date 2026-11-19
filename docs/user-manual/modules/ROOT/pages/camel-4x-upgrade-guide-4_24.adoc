@@ -500,6 +500,14 @@ The `cql` producer binds a `Map` body by name: each named marker of the statemen
 takes the value of the `Map` entry of that name. Before, a `Map` body was bound as the value of a single
 marker. To keep that, such as for a column of type `map`, wrap the `Map` in a `List`.
 
+=== camel-grpc - a producer with streamRepliesTo fails the exchange of a failed call
+
+A gRPC producer with `streamRepliesTo` and the SIMPLE producer strategy (the default) completed the exchange of a
+call that failed (server not reachable, deadline exceeded, an error status) as a success, unless `forwardOnError=true`
+routed the error to the replies endpoint. The exchange now fails with the error (an `io.grpc.StatusRuntimeException`),
+so the error handler of the route handles it. With `forwardOnError=true` the error is routed to the replies endpoint as
+before, and the exchange completes.
+
 === camel-mina-sftp - checking whether a file exists takes one lstat request
 
 The `mina-sftp` component now checks whether a remote file exists (`fileExist=Ignore|Fail|Move`, `tempFileName`,
