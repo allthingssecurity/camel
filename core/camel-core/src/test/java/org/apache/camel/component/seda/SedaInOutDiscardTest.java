@@ -18,20 +18,25 @@ package org.apache.camel.component.seda;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.camel.ContextTestSupport;
+import org.apache.camel.Exchange;
+import org.apache.camel.ExchangePattern;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.mock.MockEndpoint;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A request-reply message that the seda producer discards is answered at once (with the message as it was sent), as an
- * InOnly message that is discarded: the producer does not wait for a reply that never comes.
+ * A request-reply message that the seda producer discards fails at once with a RejectedExecutionException, as a message
+ * discarded by SedaEndpoint.purgeQueue: the producer does not wait for a reply that never comes. A discarded InOnly
+ * message is still dropped without failure.
  */
 class SedaInOutDiscardTest extends ContextTestSupport {
 
@@ -48,10 +53,14 @@ class SedaInOutDiscardTest extends ContextTestSupport {
 
     @Test
     void testDiscardIfNoConsumers() throws Exception {
-        Future<Object> reply
-                = template.asyncRequestBody("seda:none?discardIfNoConsumers=true&timeout=20000", "Hello World");
+        String uri = "seda:none?discardIfNoConsumers=true&timeout=20000";
 
-        assertEquals("Hello World", reply.get(5, TimeUnit.SECONDS));
+        Exchange reply = request(uri, "Hello World").get(5, TimeUnit.SECONDS);
+        assertRejected("Exchange discarded as the SEDA queue has no consumers", reply);
+
+        // InOnly is not changed: the message is dropped, the exchange does not fail
+        Exchange inOnly = template.send(uri, e -> e.getMessage().setBody("Bye World"));
+        assertNull(inOnly.getException());
     }
 
     @Test
@@ -65,11 +74,23 @@ class SedaInOutDiscardTest extends ContextTestSupport {
         template.sendBody(FULL, "B");
 
         // the queue is full, so the request is discarded
-        Future<Object> reply = template.asyncRequestBody(FULL, "C");
-        assertEquals("C", reply.get(5, TimeUnit.SECONDS));
+        Exchange reply = request(FULL, "C").get(5, TimeUnit.SECONDS);
+        assertRejected("Exchange discarded as the SEDA queue is full", reply);
 
         release.countDown();
         assertMockEndpointsSatisfied();
+    }
+
+    private Future<Exchange> request(String uri, String body) {
+        return template.asyncSend(uri, e -> {
+            e.setPattern(ExchangePattern.InOut);
+            e.getMessage().setBody(body);
+        });
+    }
+
+    private static void assertRejected(String message, Exchange reply) {
+        RejectedExecutionException e = assertIsInstanceOf(RejectedExecutionException.class, reply.getException());
+        assertEquals(message, e.getMessage());
     }
 
     @Override
