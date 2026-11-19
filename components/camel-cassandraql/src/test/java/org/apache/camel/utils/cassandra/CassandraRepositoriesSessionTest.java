@@ -17,8 +17,13 @@
 package org.apache.camel.utils.cassandra;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.CqlSessionBuilder;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import org.apache.camel.CamelContext;
+import org.apache.camel.component.cassandra.CassandraComponent;
+import org.apache.camel.component.cassandra.CassandraEndpoint;
+import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.camel.processor.aggregate.cassandra.CassandraAggregationRepository;
 import org.apache.camel.processor.idempotent.cassandra.CassandraIdempotentRepository;
 import org.apache.camel.processor.keyvalue.cassandra.CassandraKeyValueRepository;
@@ -64,6 +69,28 @@ class CassandraRepositoriesSessionTest {
         startStopStart(repository);
         verify(session, never()).close();
         assertSame(session, repository.getSession());
+    }
+
+    @Test
+    void testEndpointClosesTheSessionItCreates() throws Exception {
+        CqlSession session = session();
+        CqlSessionBuilder builder = mock(CqlSessionBuilder.class);
+        when(builder.build()).thenReturn(session);
+        try (CamelContext context = new DefaultCamelContext()) {
+            context.start();
+            CassandraComponent component = context.getComponent("cql", CassandraComponent.class);
+            CassandraEndpoint endpoint = new CassandraEndpoint("cql://localhost/ks", component) {
+                @Override
+                protected CqlSessionBuilder createSessionBuilder() {
+                    return builder;
+                }
+            };
+            endpoint.setHosts("localhost");
+            endpoint.start();
+            endpoint.stop();
+        }
+        // the cql endpoint created the session from its hosts, so it closes it (unlike the session of a repository)
+        verify(session).close();
     }
 
     private static void startStopStart(ServiceSupport repository) {

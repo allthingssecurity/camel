@@ -32,10 +32,18 @@ public class CassandraSessionHolder {
     private final boolean managedSession;
 
     public CassandraSessionHolder(CqlSession session) {
-        this.session = session;
         // the session is given, so it is managed outside: it can be used by others (such as cql endpoints, or other
         // repositories), and the repository can be started again after a stop, so the stop must not close it
-        this.managedSession = true;
+        this(session, true);
+    }
+
+    /**
+     * @param session        the session
+     * @param managedSession whether the session is managed outside of the holder; if false, {@link #stop()} closes it
+     */
+    public CassandraSessionHolder(CqlSession session, boolean managedSession) {
+        this.session = session;
+        this.managedSession = managedSession;
     }
 
     public void start() {
