@@ -31,6 +31,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import io.fabric8.kubernetes.api.model.HasMetadata;
@@ -85,6 +86,13 @@ public class KubernetesLeadershipController implements Service {
 
     private boolean disabled;
 
+    // the refreshes form one chain: each run executes or schedules exactly one next run. setDisabled starts a new chain,
+    // so that the change is applied at once, and the next run of the previous chain ends without a next run
+    private final AtomicLong refreshChain = new AtomicLong();
+
+    // the chain of the run in progress (only used by the thread of the executor)
+    private long runningChain;
+
     private final String logPrefix;
 
     public KubernetesLeadershipController(CamelContext camelContext, KubernetesClient kubernetesClient,
@@ -109,7 +117,7 @@ public class KubernetesLeadershipController implements Service {
             leaderNotifier = new TimedLeaderNotifier(this.camelContext, this.eventHandler);
 
             leaderNotifier.start();
-            serializedExecutor.execute(this::refreshStatus);
+            serializedExecutor.execute(refreshTask(refreshChain.get()));
         }
     }
 
@@ -244,14 +252,25 @@ public class KubernetesLeadershipController implements Service {
         ScheduledExecutorService executor = serializedExecutor;
         if (oldState != disabled && executor != null) {
             try {
-                executor.execute(this::refreshStatus);
+                // a new chain of refreshes: the next run of the current chain ends it, so the API server is not polled
+                // once more for each change (RebalancingCamelClusterService changes it on every rebalance)
+                executor.execute(refreshTask(refreshChain.incrementAndGet()));
             } catch (RejectedExecutionException e) {
                 LOG.debug("{} Cannot refresh the leadership status as the controller is stopping", logPrefix);
             }
         }
     }
 
-    private void refreshStatus() {
+    private Runnable refreshTask(long chain) {
+        return () -> refreshStatus(chain);
+    }
+
+    private void refreshStatus(long chain) {
+        if (chain != refreshChain.get()) {
+            LOG.trace("{} A newer leadership status refresh was started, ending this one", logPrefix);
+            return;
+        }
+        runningChain = chain;
         try {
             doRefreshStatus();
         } catch (Exception e) {
@@ -264,7 +283,7 @@ public class KubernetesLeadershipController implements Service {
             LOG.warn("{} Error while refreshing the leadership status (will try again): {}", logPrefix, e.getMessage());
             LOG.debug("{} Exception thrown while refreshing the leadership status", logPrefix, e);
             try {
-                executor.schedule(this::refreshStatus,
+                executor.schedule(refreshTask(chain),
                         jitter(this.lockConfiguration.getRetryPeriodMillis(), this.lockConfiguration.getJitterFactor()),
                         TimeUnit.MILLISECONDS);
             } catch (RejectedExecutionException ex) {
@@ -315,7 +334,7 @@ public class KubernetesLeadershipController implements Service {
             if (acquired) {
                 LOG.info("{} Leadership acquired by current pod with immediate effect", logPrefix);
                 this.currentState = State.LEADER;
-                this.serializedExecutor.execute(this::refreshStatus);
+                executeNextRefresh();
                 return;
             } else {
                 LOG.info("{} Unable to acquire the leadership, it may have been acquired by another pod", logPrefix);
@@ -327,7 +346,7 @@ public class KubernetesLeadershipController implements Service {
             if (acquired) {
                 LOG.info("{} Leadership acquired by current pod", logPrefix);
                 this.currentState = State.BECOMING_LEADER;
-                this.serializedExecutor.execute(this::refreshStatus);
+                executeNextRefresh();
                 return;
             } else {
                 LOG.info("{} Unable to acquire the leadership, it may have been acquired by another pod", logPrefix);
@@ -336,7 +355,7 @@ public class KubernetesLeadershipController implements Service {
             // We are leaders for some reason (e.g. pod restart on failure)
             LOG.info("{} Leadership is already owned by current pod", logPrefix);
             this.currentState = State.BECOMING_LEADER;
-            this.serializedExecutor.execute(this::refreshStatus);
+            executeNextRefresh();
             return;
         }
 
@@ -372,7 +391,7 @@ public class KubernetesLeadershipController implements Service {
 
         LOG.info("{} Current pod is becoming the new leader now...", logPrefix);
         this.currentState = State.LEADER;
-        this.serializedExecutor.execute(this::refreshStatus);
+        executeNextRefresh();
     }
 
     /**
@@ -394,7 +413,7 @@ public class KubernetesLeadershipController implements Service {
 
         LOG.info("{} Current pod is losing leadership now...", logPrefix);
         this.currentState = State.LEADERSHIP_LOST;
-        this.serializedExecutor.execute(this::refreshStatus);
+        executeNextRefresh();
     }
 
     /**
@@ -414,14 +433,14 @@ public class KubernetesLeadershipController implements Service {
 
         LOG.info("{} Current pod has lost leadership", logPrefix);
         this.currentState = State.NOT_LEADER;
-        this.serializedExecutor.execute(this::refreshStatus);
+        executeNextRefresh();
     }
 
     private void refreshStatusLeader() {
         if (this.disabled) {
             LOG.debug("{} Leadership disabled, pod is going to lose leadership", logPrefix);
             this.currentState = State.LOSING_LEADERSHIP;
-            this.serializedExecutor.execute(this::refreshStatus);
+            executeNextRefresh();
             return;
         }
 
@@ -454,12 +473,16 @@ public class KubernetesLeadershipController implements Service {
                     lockConfiguration.getLeaseDurationMillis(), this.latestLeaderInfo.getMembers());
 
             // restart from scratch to acquire leadership
-            this.serializedExecutor.execute(this::refreshStatus);
+            executeNextRefresh();
         }
     }
 
+    private void executeNextRefresh() {
+        this.serializedExecutor.execute(refreshTask(runningChain));
+    }
+
     private void rescheduleAfterDelay() {
-        this.serializedExecutor.schedule(this::refreshStatus,
+        this.serializedExecutor.schedule(refreshTask(runningChain),
                 jitter(this.lockConfiguration.getRetryPeriodMillis(), this.lockConfiguration.getJitterFactor()),
                 TimeUnit.MILLISECONDS);
     }
