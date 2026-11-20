@@ -6594,6 +6594,11 @@ changes:
   send back a body that is received already: when a part of the body, as of a large body, is still to be received,
   the stream fails with an `IOException`, and the connection is closed without a complete reply. Before, the I/O
   thread waited for ever.
+  As the rest of the body is read only once such a reply is written, when a route does not read a large body and
+  replies with a stream of its own that is larger than what the connection buffers, the reply and a client that sends
+  the whole body before it reads the response wait for each other for ever. In that case close the body stream in the
+  route (for example `exchange.getIn().getBody(InputStream.class).close()`), or reply with a body that is not a
+  stream. Before, such a request got no response once the body was larger than 1 KB.
 * The stream fails with an `IOException` when the connection is closed before the whole body is received. Before, it
   ended as if the body was complete.
 
