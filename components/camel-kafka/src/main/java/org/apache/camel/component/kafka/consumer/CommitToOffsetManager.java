@@ -60,4 +60,9 @@ public class CommitToOffsetManager extends AbstractCommitManager {
 
         offsetCache.recordOffset(partition, partitionLastOffset);
     }
+
+    @Override
+    public void discardRecordedOffset(TopicPartition partition) {
+        offsetCache.remove(partition);
+    }
 }
