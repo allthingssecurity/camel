@@ -68,6 +68,18 @@ public abstract class JtaTransactionPolicy implements TransactedPolicy {
 
     public abstract void run(Runnable runnable) throws Throwable;
 
+    /**
+     * Whether {@link #run(Runnable)} runs in a new transaction (as PROPAGATION_REQUIRES_NEW). Such a policy is run also
+     * for an exchange that is already in a transaction of this policy (a route of this policy called from another route
+     * of this policy), as the camel-spring transaction error handler does for PROPAGATION_REQUIRES_NEW. Otherwise the
+     * exchange goes on in the transaction it is in.
+     *
+     * @return <tt>false</tt> by default
+     */
+    public boolean isRequiresNew() {
+        return false;
+    }
+
     @Override
     public Processor wrap(Route route, Processor processor) {
         JtaTransactionErrorHandler answer;

@@ -95,7 +95,7 @@ public class TransactionErrorHandler extends ErrorHandlerSupport
     public void process(Exchange exchange) throws Exception {
         // we have to run this synchronously as a JTA Transaction does *not*
         // support using multiple threads to span a transaction
-        if (exchange.getUnitOfWork().isTransactedBy(transactionKey)) {
+        if (!transactionPolicy.isRequiresNew() && exchange.getUnitOfWork().isTransactedBy(transactionKey)) {
             // already transacted by this transaction template
             // so lets just let the error handler process it
             processByErrorHandler(exchange);
@@ -134,9 +134,14 @@ public class TransactionErrorHandler extends ErrorHandlerSupport
         final String redelivered = Boolean.toString(exchange.isExternalRedelivered());
         final String ids = ExchangeHelper.logIds(exchange);
 
+        // a new transaction (isRequiresNew) inside a transaction of the same policy: the outer transaction already
+        // marked the unit of work, and keeps the mark when this one ends
+        final boolean nested = exchange.getUnitOfWork().isTransactedBy(transactionKey);
         try {
             // mark the beginning of this transaction boundary
-            exchange.getUnitOfWork().beginTransactedBy(transactionKey);
+            if (!nested) {
+                exchange.getUnitOfWork().beginTransactedBy(transactionKey);
+            }
             inflightTransactedExchanges.add(exchange);
             // do in transaction
             logTransactionBegin(redelivered, ids);
@@ -152,7 +157,9 @@ public class TransactionErrorHandler extends ErrorHandlerSupport
         } finally {
             inflightTransactedExchanges.remove(exchange);
             // mark the end of this transaction boundary
-            exchange.getUnitOfWork().endTransactedBy(transactionKey);
+            if (!nested) {
+                exchange.getUnitOfWork().endTransactedBy(transactionKey);
+            }
         }
 
         // if it was a local rollback only then remove its marker so outer

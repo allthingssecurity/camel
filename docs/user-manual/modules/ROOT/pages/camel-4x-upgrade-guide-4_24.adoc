@@ -370,6 +370,16 @@ Before, its lock failed with an `OptimisticLockException`, and the poll was roll
 
 Other JPA providers, and the optimistic lock modes, are not affected.
 
+=== camel-jta - a PROPAGATION_REQUIRES_NEW policy tells it with isRequiresNew
+
+`JtaTransactionPolicy` has a new method `isRequiresNew()` (default `false`). A policy that runs each exchange in a new
+transaction (PROPAGATION_REQUIRES_NEW) should return `true`: the transaction error handler then runs the policy also
+for a message that is already in a transaction of the same policy bean, which happens when a route of that policy
+calls another route of that policy (`to("direct:...")`). Before, and still for a policy that returns `false`, the
+called route joins the transaction of the calling route, so a `markRollbackOnlyLast()` in it rolls back the calling
+route's transaction too. The camel-spring transaction error handler already starts a new transaction there
+(PROPAGATION_REQUIRES_NEW).
+
 === camel-vertx-http - an https:// address always uses TLS
 
 A `vertx-http` endpoint with an `https://` address now always calls it with TLS, also when no `sslContextParameters`
