@@ -147,6 +147,11 @@ public class MllpTcpServerConsumer extends DefaultConsumer {
             bindThread = null;
         }
 
+        // the executors of this start (doStart creates new ones): running runnables end on their own, and a connection
+        // still being validated is reset by startConsumer
+        getEndpoint().getCamelContext().getExecutorServiceManager().shutdown(validationExecutor);
+        getEndpoint().getCamelContext().getExecutorServiceManager().shutdown(consumerExecutor);
+
         super.doStop();
     }
 
@@ -253,6 +258,13 @@ public class MllpTcpServerConsumer extends DefaultConsumer {
                 this, clientSocket, mllpBuffer, hl7Util, logPhi);
 
         consumerRunnables.put(client, System.currentTimeMillis());
+        if (!isRunAllowed()) {
+            // the consumer is stopping or stopped (the connection was accepted just before): do not serve it. The check
+            // comes after the put, so the runnable is either seen by the loop of doStop, or not started here
+            consumerRunnables.remove(client);
+            mllpBuffer.resetSocket(clientSocket, "Consumer is stopped");
+            return;
+        }
         try {
             log.info("startConsumer({}) - starting consumer", clientSocket);
             consumerExecutor.submit(client);
