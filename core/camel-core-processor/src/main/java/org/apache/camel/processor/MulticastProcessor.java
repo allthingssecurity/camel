@@ -18,6 +18,7 @@ package org.apache.camel.processor;
 
 import java.io.Closeable;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -470,6 +471,12 @@ public class MulticastProcessor extends BaseProcessorSupport
         final AtomicInteger nbAggregated = new AtomicInteger();
         final AtomicBoolean allSent = new AtomicBoolean();
         final AtomicBoolean done = new AtomicBoolean();
+        /**
+         * The indexes that are aggregated or reported to {@link AggregationStrategy#timeout}, when there is a timeout.
+         * In streaming mode the exchanges are aggregated in the order they complete, so the timeout cannot take the
+         * number of aggregated exchanges as the next index. Guarded by the lock.
+         */
+        final BitSet handledIndexes;
         @Deprecated(since = "4.19.0")
         final Map<String, String> mdc;
         final ScheduledFuture<?> timeoutTask;
@@ -481,6 +488,7 @@ public class MulticastProcessor extends BaseProcessorSupport
             this.pairs = pairs;
             this.callback = callback;
             this.iterator = pairs.iterator();
+            this.handledIndexes = timeout > 0 ? new BitSet() : null;
             if (timeout > 0) {
                 timeoutTask = schedule(aggregateExecutorService, this::timeout, timeout, TimeUnit.MILLISECONDS);
             } else {
@@ -548,8 +556,16 @@ public class MulticastProcessor extends BaseProcessorSupport
             try {
                 Exchange exchange;
                 while (!done.get() && (exchange = completion.poll()) != null) {
+                    Integer index = handledIndexes != null ? getExchangeIndex(exchange) : null;
                     doAggregate(result, exchange, original);
-                    if (nbAggregated.incrementAndGet() >= nbExchangeSent.get() && allSent.get()) {
+                    if (index != null) {
+                        handledIndexes.set(index);
+                    }
+                    int aggregated = nbAggregated.incrementAndGet();
+                    // read allSent before nbExchangeSent: the sender sets allSent after its last increment of
+                    // nbExchangeSent, so the count read afterwards is final (read the other way round, the count can
+                    // miss the last exchange, which would then never be aggregated)
+                    if (allSent.get() && aggregated >= nbExchangeSent.get()) {
                         doDone(result.get(), true);
                     }
                 }
@@ -598,8 +614,11 @@ public class MulticastProcessor extends BaseProcessorSupport
                 while (nbAggregated.get() < nbExchangeSent.get()) {
                     Exchange exchange = completion.pollUnordered();
                     int index = exchange != null ? getExchangeIndex(exchange) : nbExchangeSent.get();
-                    while (nbAggregated.get() < index) {
-                        int idx = nbAggregated.getAndIncrement();
+                    // report the indexes before it that are not aggregated (in streaming mode these are not
+                    // the first nbAggregated indexes, as the exchanges are aggregated in the order they complete)
+                    for (int idx = handledIndexes.nextClearBit(0); idx < index; idx = handledIndexes.nextClearBit(idx + 1)) {
+                        handledIndexes.set(idx);
+                        nbAggregated.incrementAndGet();
                         AggregationStrategy strategy = getAggregationStrategy(null);
                         if (strategy != null) {
                             strategy.timeout(result.get() != null ? result.get() : original,
@@ -608,6 +627,7 @@ public class MulticastProcessor extends BaseProcessorSupport
                     }
                     if (exchange != null) {
                         doAggregate(result, exchange, original);
+                        handledIndexes.set(index);
                         nbAggregated.incrementAndGet();
                     }
                 }
