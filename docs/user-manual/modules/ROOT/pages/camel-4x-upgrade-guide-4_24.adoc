@@ -2132,6 +2132,19 @@ same id is now processed instead of being dropped as a duplicate.
 To keep the message id, set `removeOnFailure=false`. Note that this also keeps the message id of an exchange that
 failed with an exception.
 
+=== camel-support - FileIdempotentRepository rewrites its file store through a temporary file
+
+When a key is removed, or the oldest keys are dropped because the file store is bigger than `maxFileStoreSize`,
+`FileIdempotentRepository` now writes the remaining keys to a temporary file next to the file store (the name of the
+file store with `.tmp` added), and then moves it over the file store. Before, it rewrote the file store in place, and an
+I/O error or a JVM that stopped while it rewrote lost the keys not yet rewritten. The repository needs to be allowed to
+create files in the directory of the file store; if it cannot, or the file system cannot replace a file in one move, it
+rewrites the file store in place as before and logs a WARN. A file consumer that reads the directory of the file store
+can see the temporary file, so keep the file store out of directories that are consumed.
+
+An `add` that stored the key no longer fails when dropping the oldest keys fails: the failure is logged at WARN, and the
+next `add` drops them.
+
 === camel-cyberark-vault - credentials are checked at endpoint start, and a rejected token is retried only once
 
 A `cyberark-vault` endpoint now fails to start when it has no usable credentials, with a message that names the
