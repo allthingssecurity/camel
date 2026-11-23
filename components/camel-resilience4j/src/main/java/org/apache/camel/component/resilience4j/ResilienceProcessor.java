@@ -67,6 +67,7 @@ import org.apache.camel.processor.PrototypeTaskFactory;
 import org.apache.camel.spi.IdAware;
 import org.apache.camel.spi.ProcessorExchangeFactory;
 import org.apache.camel.spi.RouteIdAware;
+import org.apache.camel.spi.ThreadPoolProfile;
 import org.apache.camel.spi.UnitOfWork;
 import org.apache.camel.support.AsyncProcessorConverterHelper;
 import org.apache.camel.support.EventHelper;
@@ -192,8 +193,14 @@ public class ResilienceProcessor extends BaseProcessorSupport
         if (asynchronous && timeLimiter != null && scheduledExecutorService == null && timeoutScheduler == null) {
             // the timeouts get their own threads: when they were tasks of the pool that runs the calls, a timeout
             // could not fire while every thread of that pool was blocked in a call, which is what the timeout is for
-            timeoutScheduler = camelContext.getExecutorServiceManager().newDefaultScheduledThreadPool(this,
-                    "CircuitBreakerTimeout");
+            // the threads of the default thread pool profile, without its queue limit: the time limiter schedules the
+            // timeout after the call was submitted, so a rejected timeout failed an exchange whose call still ran. The
+            // queue holds one small task per call in flight, and per call that failed within the timeout duration
+            // (the time limiter cancels the timeout only on success, and a cancelled one is removed from the queue)
+            ThreadPoolProfile profile = new ThreadPoolProfile("CircuitBreakerTimeout");
+            profile.setMaxQueueSize(-1);
+            timeoutScheduler = camelContext.getExecutorServiceManager().newScheduledThreadPool(this,
+                    "CircuitBreakerTimeout", profile);
         }
         ServiceHelper.startService(processorExchangeFactory, taskFactory, fallbackTaskFactory, processor);
     }
