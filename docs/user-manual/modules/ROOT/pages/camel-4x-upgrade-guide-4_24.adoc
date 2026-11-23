@@ -9774,6 +9774,16 @@ deserialize, is logged with a WARN and does not stop the start of the route. If 
 incomplete (the JVM stopped while writing it) or invalid, the entries before it are replayed and a WARN is logged; the
 route still starts. A file that is not a log of this format is replaced by a new log, as before, with a WARN.
 
+When there are entries to keep, `start()` writes the new log with them to a file in the same directory, named as the
+log with the suffix `.tmp`, forces it to disk and then moves it atomically over the log. So a crash, a power loss or an
+error during `start()` does not lose them: until the move the previous log is unchanged, and after it the new log holds
+them on disk. Before, `start()` truncated the log first, and such a failure left an empty log. The process needs the
+permission to create that file in the directory of the log, and the file system must be able to move it over the log
+atomically (a log file that is itself a mount point, such as a single file mounted into a container, cannot be
+replaced). Otherwise `start()` fails and the log is kept as it was; keep the log in a directory the process can write
+to. The new log gets the permissions of the previous one, not its owner or group. Without entries to keep, the log is
+truncated in place, as before.
+
 The log keeps 524,288 entries; after that it rolls over and holds the newest entries before the older ones, and the
 file does not say which are newer. So a log that holds that many entries is not replayed, as before: a WARN names the
 number of unconfirmed entries, which are discarded with the log. Replaying the wrong offset of a key would make the
