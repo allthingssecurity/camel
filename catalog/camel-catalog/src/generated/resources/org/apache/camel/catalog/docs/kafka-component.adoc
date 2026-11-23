@@ -127,6 +127,11 @@ Each repository instance that uses the topic, (e.g., typically on different mach
 On startup, the instance subscribes to the topic, rewinds the offset to the beginning and rebuilds the cache to the latest state. The cache will not be considered warmed up until one poll of `pollDurationMs` in length returns 0 records. Startup will not be completed until either the cache has warmed up, or 30 seconds go by; if the latter happens, the idempotent repository may be in an inconsistent state until its consumer catches up to the end of the topic.
 Be mindful of the format of the header used for the uniqueness check. By default, it uses Strings as the data types. When using primitive numeric formats, the header must be deserialized accordingly. Check the samples below for examples.
 
+An `add` or `remove` changes the local cache of the instance at once, and the instance reads its own record back from the topic later, like the records of the other instances.
+A record of a key that is older (at a lower offset) than the last `add` or `remove` of that key by the instance is not applied, so the instance's own earlier record, or an older record of another instance, does not undo a newer local change. This relies on all the records of a key being in one partition, as the default partitioner of the Kafka producer does, and needs the offset of each write (any `acks` other than `0`).
+A `clear` record has no key, so on a topic with more than one partition it is not ordered against the records of the keys: use a topic with one partition if you call `clear`.
+When the write of an `add` fails without telling whether the record was written (a delivery timeout, or the thread is interrupted while waiting), the instance writes a `remove` of the key before the `add` fails, so that a record written after all does not make every later copy of the message a duplicate. This is best effort: the `remove` can fail too, and if the instance had already read the `add` back before the failure, it cannot tell it from an `add` of another instance and keeps the key.
+
 A `KafkaIdempotentRepository` has the following properties:
 [width="100%",cols="2m,2m,5",options="header"]
 |===
