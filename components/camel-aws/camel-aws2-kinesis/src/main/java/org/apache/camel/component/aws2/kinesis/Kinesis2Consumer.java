@@ -93,6 +93,9 @@ public class Kinesis2Consumer extends ScheduledBatchPollingConsumer implements R
     private volatile List<Shard> currentShardList = List.of();
     private static final String SHARD_MONITOR_EXECUTOR_NAME = "Kinesis_shard_monitor";
     private ScheduledExecutorService shardMonitorExecutor;
+    // The error that stopped the shard monitor: from then on the shards created by a split or a merge are not listed,
+    // so poll() reports it until the consumer is restarted
+    private volatile VirtualMachineError shardMonitorError;
 
     public Kinesis2Consumer(Kinesis2Endpoint endpoint,
                             Processor processor) {
@@ -113,6 +116,13 @@ public class Kinesis2Consumer extends ScheduledBatchPollingConsumer implements R
 
     @Override
     protected int poll() throws Exception {
+        VirtualMachineError monitorError = shardMonitorError;
+        if (monitorError != null) {
+            throw new IllegalStateException(
+                    "The shard monitor of stream " + getEndpoint().getConfiguration().getStreamName()
+                                            + " stopped after an error, restart the consumer: " + monitorError,
+                    monitorError);
+        }
         var processedExchangeCount = new AtomicInteger(0);
 
         String shardId = getEndpoint().getConfiguration().getShardId();
@@ -481,6 +491,7 @@ public class Kinesis2Consumer extends ScheduledBatchPollingConsumer implements R
         super.doStart();
 
         ObjectHelper.notNull(connection, "connection", this);
+        shardMonitorError = null;
         this.shardMonitorExecutor = getEndpoint().getCamelContext().getExecutorServiceManager()
                 .newSingleThreadScheduledExecutor(this, SHARD_MONITOR_EXECUTOR_NAME);
         this.shardMonitorExecutor.scheduleAtFixedRate(new ShardMonitor(),
@@ -513,7 +524,8 @@ public class Kinesis2Consumer extends ScheduledBatchPollingConsumer implements R
         this.currentShardList = List.copyOf(latestShardList);
     }
 
-    private class ShardMonitor implements Runnable {
+    // package-private for tests, which run the monitor themselves
+    class ShardMonitor implements Runnable {
         @Override
         public void run() {
             try {
@@ -523,6 +535,17 @@ public class Kinesis2Consumer extends ScheduledBatchPollingConsumer implements R
                     trackChildShards(latestShardList);
                     setCurrentShardList(latestShardList);
                 }
+            } catch (VirtualMachineError e) {
+                // thrown on, as Camel does for such an error, so it ends the scheduled task: poll() reports it from now on
+                shardMonitorError = e;
+                LOG.error("The shard monitor of stream {} stopped: the shards created by a split or a merge are no longer"
+                          + " listed until the consumer is restarted",
+                        getEndpoint().getConfiguration().getStreamName(), e);
+                throw e;
+            } catch (Error e) {
+                // thrown on, it would end the scheduled task without a log line, and the shards created by a later split
+                // or merge would never be listed
+                LOG.warn("Error getting latest shard list", e);
             } catch (Exception e) {
                 LOG.warn("Exception getting latest shard list", e);
             }
