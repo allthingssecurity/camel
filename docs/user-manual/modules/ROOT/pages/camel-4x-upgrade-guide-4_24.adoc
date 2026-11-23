@@ -6816,6 +6816,16 @@ To keep the previous behaviour, set `maxResultsPerRequest=1`. See the
 xref:components::aws2-kinesis-component.adoc[AWS Kinesis component] for how `maxResultsPerRequest`, `delay` and
 `greedy` relate to the Kinesis read quotas of a shard.
 
+=== camel-aws2-kinesis - the consumer is not ready before it has listed the shards
+
+The consumer (without `useKclConsumers`) reads the shards that its shard monitor lists with `ListShards`. Until that
+listing has succeeded once, the consumer is no longer reported ready, and a poll fails with an
+`IllegalStateException` whose cause is the error of the last `ListShards` (for example an `AccessDeniedException`
+without the `kinesis:ListShards` permission, or a `ResourceNotFoundException` for a stream that does not exist). The
+consumer health check is then DOWN with that error, and each poll is reported to the exception handler of the
+consumer, as for other poll failures. Before, such a consumer read nothing and was reported UP, and only the shard
+monitor logged a WARN.
+
 === camel-graphql - the credentials are only sent to the authority of httpUri
 
 The `accessToken` (with its `jwtAuthorizationType`) is now added to a request only when the request goes to the
