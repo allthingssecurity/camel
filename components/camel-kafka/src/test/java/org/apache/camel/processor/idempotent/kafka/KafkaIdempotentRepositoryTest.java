@@ -182,6 +182,19 @@ public class KafkaIdempotentRepositoryTest {
     }
 
     @Test
+    void testStartupOnlyKeepsNoOffsets() throws Exception {
+        // without the background poller no record is applied after the start: nothing to order the records against
+        repository.setStartupOnly(true);
+        repository.add("key1");
+        repository.remove("key1");
+        assertTrue(repository.add("key1"));
+
+        Field field = KafkaIdempotentRepository.class.getDeclaredField("localWrites");
+        field.setAccessible(true);
+        assertTrue(((Map<?, ?>) field.get(repository)).isEmpty());
+    }
+
+    @Test
     void testTombstoneIsSkippedAndTheNextRecordsAreApplied() throws Exception {
         cache.put("key1", "key1");
 

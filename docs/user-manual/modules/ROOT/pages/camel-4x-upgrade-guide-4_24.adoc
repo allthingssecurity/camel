@@ -9310,6 +9310,17 @@ default) and then fails, where it succeeded with `acks=1`. A broker before Kafka
 of the repository (with `bootstrap.servers`, as a `producerConfig` replaces the `bootstrapServers` of the repository
 for the producer).
 
+=== camel-kafka - KafkaIdempotentRepository ignores records older than its own changes
+
+`KafkaIdempotentRepository` no longer applies a record of its topic that is older than the last `add` or `remove` of the
+same key by the instance itself. Before, the instance's own earlier record, or an older record of another instance,
+read after a newer local change undid it: a redelivery after `remove` could be rejected as a duplicate, or a duplicate
+accepted while the key was held. When the write of an `add` fails without telling whether it was written (a delivery
+timeout, or an interrupt while waiting), the repository now also writes a `remove` record of the key, so the topic can
+hold `remove` records that no route asked for, and such an `add` fails only once that `remove` is written or has failed
+too, which can take up to `delivery.timeout.ms` longer. See the
+xref:components::kafka-component.adoc[Kafka component].
+
 === camel-dns - dig without a type, and the wikipedia type
 
 `dns:dig` without the `CamelDnsType` header now asks for type A, and without the `CamelDnsName` header fails with an

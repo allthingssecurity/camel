@@ -16,8 +16,12 @@
  */
 package org.apache.camel.processor.idempotent.kafka;
 
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.camel.CamelContext;
@@ -32,6 +36,8 @@ import org.apache.camel.support.service.ServiceSupport;
 import org.apache.camel.util.ObjectHelper;
 import org.apache.camel.util.StringHelper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
@@ -68,6 +74,17 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
     // internal properties
     private Map<String, Object> cache;
     private KafkaChangelog<String> changelog;
+    // the keys changed by this instance whose records the background poller has not read back yet, at most
+    // maxCacheSize without a send in flight (the least recently changed is forgotten first); also the lock that orders
+    // the changes of the cache by this instance and by the poller
+    private final Map<String, LocalWrite> localWrites = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, LocalWrite> eldest) {
+            // a key whose record the poller does not read back (a partition added to the topic after the start), or
+            // a poller that lags far behind: forget it, and apply its older records as before
+            return size() > maxCacheSize && eldest.getValue().pending == 0;
+        }
+    };
 
     private Properties producerConfig;
     private Properties consumerConfig;
@@ -305,6 +322,9 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
         StringHelper.notEmpty(topic, "topic");
 
         this.cache = LRUCacheFactory.newLRUCache(maxCacheSize);
+        synchronized (localWrites) {
+            localWrites.clear();
+        }
 
         consumerConfig = KafkaChangelog.consumerConfig(consumerConfig, bootstrapServers, groupId);
         producerConfig = KafkaChangelog.producerConfig(producerConfig, bootstrapServers);
@@ -338,22 +358,120 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
         CacheAction action;
         try {
             action = CacheAction.valueOf(value);
-            if (action == CacheAction.add) {
-                LOG.debug("Adding to cache messageId:{}", messageId);
-                cache.put(messageId, messageId);
-            } else if (action == CacheAction.remove) {
-                LOG.debug("Removing from cache messageId:{}", messageId);
-                cache.remove(messageId);
-            } else if (action == CacheAction.clear) {
-                cache.clear();
-            } else {
-                throw new IllegalArgumentException("Unknown action");
-            }
         } catch (IllegalArgumentException iax) {
             LOG.warn(
                     "Unexpected action value:\"{}\" received on [topic:{}, partition:{}, offset:{}]. Ignoring.",
                     value, consumerRecord.topic(),
                     consumerRecord.partition(), consumerRecord.offset());
+            return;
+        }
+        synchronized (localWrites) {
+            if (action == CacheAction.clear) {
+                clearFromTopic(consumerRecord.partition(), consumerRecord.offset());
+            } else {
+                applyFromTopic(messageId, action, consumerRecord.partition(), consumerRecord.offset());
+            }
+        }
+    }
+
+    /**
+     * Applies an add or remove record of the topic, unless it is older than a change of the same key by this instance.
+     * {@link #add(String)} and {@link #remove(String)} change the cache at once, and the poller reads the older records
+     * of the key (the earlier records of this instance, or of a peer) later: such a record would undo the newer change.
+     * The records of a key are ordered by their offset, as the producer writes all of them to one partition. Called
+     * with the lock held.
+     */
+    private void applyFromTopic(String key, CacheAction action, int partition, long offset) {
+        LocalWrite write = localWrites.get(key);
+        if (write == null) {
+            applyToCache(key, action);
+        } else if (write.isNewerThan(partition, offset)) {
+            LOG.debug("Ignoring {} of messageId:{} at [partition:{}, offset:{}], older than a change by this instance",
+                    action, key, partition, offset);
+            if (write.pending == 0 && write.isReadBackBy(partition, offset)) {
+                localWrites.remove(key);
+            }
+        } else if (write.pending > 0) {
+            // the offset of the change in flight is not known yet: decide when its send completes
+            write.defer(action, partition, offset);
+        } else {
+            applyToCache(key, action);
+            if (write.isReadBackBy(partition, offset)) {
+                localWrites.remove(key);
+            }
+        }
+    }
+
+    /**
+     * Applies a clear record of the topic, but keeps the keys changed by this instance after it, or with a change in
+     * flight. A clear has no key, so on a topic with more than one partition it is not ordered against the records of
+     * the keys. Called with the lock held.
+     */
+    private void clearFromTopic(int partition, long offset) {
+        Map<String, Object> keep = new HashMap<>();
+        for (Iterator<Map.Entry<String, LocalWrite>> it = localWrites.entrySet().iterator(); it.hasNext();) {
+            Map.Entry<String, LocalWrite> entry = it.next();
+            LocalWrite write = entry.getValue();
+            boolean newer = write.isNewerThan(partition, offset);
+            if (!newer && write.pending > 0) {
+                write.defer(CacheAction.remove, partition, offset);
+            } else if (!newer && write.isReadBackBy(partition, offset)) {
+                it.remove();
+            }
+            Object value = cache.get(entry.getKey());
+            if (value != null && (newer || write.pending > 0)) {
+                keep.put(entry.getKey(), value);
+            }
+        }
+        cache.clear();
+        cache.putAll(keep);
+    }
+
+    private void applyToCache(String key, CacheAction action) {
+        if (action == CacheAction.add) {
+            LOG.debug("Adding to cache messageId:{}", key);
+            cache.put(key, key);
+        } else {
+            LOG.debug("Removing from cache messageId:{}", key);
+            cache.remove(key);
+        }
+    }
+
+    /**
+     * Records that a change of the key by this instance is in flight. Called with the lock held, together with the
+     * change of the cache. Without the background poller (startupOnly) no record is applied after the start, so there
+     * is nothing to order.
+     */
+    private void beginLocalWrite(String key) {
+        if (!startupOnly) {
+            localWrites.computeIfAbsent(key, k -> new LocalWrite()).pending++;
+        }
+    }
+
+    /**
+     * Records the offset of a change of the key by this instance once its send completed (null if it failed), and
+     * applies the newest record of the key that the poller read meanwhile, unless it is older than the change.
+     */
+    private void endLocalWrite(String key, RecordMetadata metadata) {
+        synchronized (localWrites) {
+            LocalWrite write = localWrites.get(key);
+            if (write == null) {
+                return;
+            }
+            write.pending--;
+            write.written(metadata);
+            if (write.pending > 0) {
+                return;
+            }
+            if (write.deferredAction != null) {
+                CacheAction action = write.deferredAction;
+                write.deferredAction = null;
+                applyFromTopic(key, action, write.deferredPartition, write.deferredOffset);
+            }
+            if (write.partition < 0) {
+                // nothing of this instance in the topic to order the records against
+                localWrites.remove(key, write);
+            }
         }
     }
 
@@ -361,22 +479,88 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
     public boolean add(String key) {
         // the poller stores key -> key for an add of a peer, so roll back only the value put by this call
         Object token = new Object();
-        if (cache.putIfAbsent(key, token) != null) {
-            return false;
+        synchronized (localWrites) {
+            if (cache.putIfAbsent(key, token) != null) {
+                return false;
+            }
+            beginLocalWrite(key);
         }
+        RecordMetadata metadata;
         try {
-            broadcastAction(key, CacheAction.add);
-            return true;
+            metadata = broadcastAction(key, CacheAction.add);
         } catch (Exception e) {
-            cache.remove(key, token);
+            boolean undo = false;
+            synchronized (localWrites) {
+                boolean rolledBack = cache.remove(key, token);
+                // applies the records of the key read meanwhile: an add read from the topic puts the key back
+                endLocalWrite(key, null);
+                if (rolledBack && !cache.containsKey(key) && isUnknownOutcome(e)) {
+                    // this call holds the key until its remove is written, as while its add was in flight, so a later
+                    // add of the key by this instance is written after the remove
+                    cache.put(key, token);
+                    beginLocalWrite(key);
+                    undo = true;
+                }
+            }
+            if (undo) {
+                undo(key, token);
+            }
             throw e;
+        }
+        endLocalWrite(key, metadata);
+        return true;
+    }
+
+    /**
+     * Whether the failed send may still have written the record: the delivery timed out, or the thread was interrupted
+     * while waiting for the result.
+     */
+    private static boolean isUnknownOutcome(Exception e) {
+        Throwable cause = e.getCause();
+        if (cause instanceof InterruptedException) {
+            return true;
+        }
+        if (cause instanceof ExecutionException) {
+            cause = cause.getCause();
+        }
+        return cause instanceof RetriableException;
+    }
+
+    /**
+     * The send of an add failed, but the record may have been written. Then every instance, and every later start,
+     * would take the redelivery of the message as a duplicate. Writes a remove of the key, so the add is undone if it
+     * was written: the producer writes it after the add. This is best effort: the remove can fail too, and if an add of
+     * the key was read from the topic while waiting for the add (this instance's own add cannot be told from one of a
+     * peer), the key is kept. Waits until the remove is written, before the add fails, so that the redelivery of the
+     * message, on any instance, comes after it. Called without the lock, as the producer can block (up to max.block.ms
+     * when it has no metadata of the topic), with the key held by the token of the add.
+     */
+    private void undo(String key, Object token) {
+        LOG.warn("The add of messageId:{} failed but may have been written to topic:{}. Writing a remove of the key.", key,
+                topic);
+        RecordMetadata metadata = null;
+        try {
+            metadata = changelog.sendAsync(key, CacheAction.remove.name()).get();
+        } catch (InterruptedException e) {
+            // the remove is with the producer: it is written after the add, but the redelivery may not wait for it
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            LOG.warn("Cannot write the remove of messageId:{} to topic:{} due to: {}", key, topic,
+                    e.getCause().getMessage(), e.getCause());
+        } catch (Exception e) {
+            LOG.warn("Cannot write the remove of messageId:{} to topic:{} due to: {}", key, topic, e.getMessage(), e);
+        } finally {
+            synchronized (localWrites) {
+                cache.remove(key, token);
+                endLocalWrite(key, metadata);
+            }
         }
     }
 
-    private void broadcastAction(String key, CacheAction action) {
+    private RecordMetadata broadcastAction(String key, CacheAction action) {
         LOG.debug("Broadcasting action:{} for key:{}", action, key);
         ObjectHelper.notNull(changelog, "changelog");
-        changelog.send(key, action.toString());
+        return changelog.send(key, action.toString());
     }
 
     @Override
@@ -388,11 +572,18 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
     @Override
     @ManagedOperation(description = "Remove the key from the store")
     public boolean remove(String key) {
-        // update the local cache and broadcast the removal on the topic, which
-        // will be reflected
-        // at a later point in any peers
-        cache.remove(key);
-        broadcastAction(key, CacheAction.remove);
+        // update the local cache and broadcast the removal on the topic, which will be reflected at a later point in
+        // any peers
+        synchronized (localWrites) {
+            cache.remove(key);
+            beginLocalWrite(key);
+        }
+        RecordMetadata metadata = null;
+        try {
+            metadata = broadcastAction(key, CacheAction.remove);
+        } finally {
+            endLocalWrite(key, metadata);
+        }
         return true;
     }
 
@@ -403,7 +594,9 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
 
     @Override
     public void clear() {
-        cache.clear();
+        synchronized (localWrites) {
+            cache.clear();
+        }
         broadcastAction(null, CacheAction.clear);
     }
 
@@ -415,5 +608,45 @@ public class KafkaIdempotentRepository extends ServiceSupport implements Idempot
     @ManagedOperation(description = "Number of elements currently in the cache")
     public long getCacheSize() {
         return cache != null ? cache.size() : 0;
+    }
+
+    /**
+     * The changes of one key by this instance that the poller has not read back yet. Guarded by the lock.
+     */
+    private static final class LocalWrite {
+        // the sends of the key in flight
+        int pending;
+        // the newest record of the key written by this instance, partition -1 if none
+        int partition = -1;
+        long offset = -1;
+        // the newest record of the key read from the topic while a send was in flight
+        CacheAction deferredAction;
+        int deferredPartition;
+        long deferredOffset;
+
+        boolean isNewerThan(int partition, long offset) {
+            return this.partition == partition && offset <= this.offset;
+        }
+
+        boolean isReadBackBy(int partition, long offset) {
+            return this.partition == partition && offset >= this.offset;
+        }
+
+        void written(RecordMetadata metadata) {
+            // no offset with acks=0
+            if (metadata != null && metadata.hasOffset()
+                    && (metadata.partition() != partition || metadata.offset() > offset)) {
+                partition = metadata.partition();
+                offset = metadata.offset();
+            }
+        }
+
+        void defer(CacheAction action, int partition, long offset) {
+            if (deferredAction == null || deferredPartition != partition || offset > deferredOffset) {
+                deferredAction = action;
+                deferredPartition = partition;
+                deferredOffset = offset;
+            }
+        }
     }
 }
