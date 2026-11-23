@@ -21,7 +21,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -46,6 +51,7 @@ public final class LogWriter implements AutoCloseable {
 
     private final LogSupervisor flushPolicy;
     private final TransactionLog transactionLog;
+    private final List<EntryInfo.CachedEntryInfo> initialEntryInfos;
 
     private long startOfRecords;
 
@@ -72,15 +78,95 @@ public final class LogWriter implements AutoCloseable {
      * @throws IOException    in case of I/O errors
      */
     LogWriter(File logFile, LogSupervisor logSupervisor, int maxRecordCount) throws IOException {
-        this.fileChannel = FileChannel.open(logFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                StandardOpenOption.TRUNCATE_EXISTING);
+        this(logFile, logSupervisor, maxRecordCount, List.of());
+    }
 
-        final Header header = Header.WA_DEFAULT_V1;
-        writeHeader(header);
-
+    /**
+     * Constructs a new log writer whose new log holds the given entries first. Without entries, the file is truncated,
+     * as with the other constructors. With entries, the file is replaced only once the new log is on disk: the header
+     * and the entries are written to a temporary file in the same directory, which is forced to disk and then moved
+     * over the file. If this fails, the file is left as it was.
+     *
+     * @param  logFile        the transaction log file
+     * @param  logSupervisor  the log supervisor {@link LogSupervisor} for the writer
+     * @param  maxRecordCount the maximum number of records to keep in the file. Beyond this count, entries will be
+     *                        rolled-over.
+     * @param  entries        the entries the new log holds first (fewer than maxRecordCount)
+     * @throws IOException    in case of I/O errors
+     */
+    LogWriter(File logFile, LogSupervisor logSupervisor, int maxRecordCount, List<LogEntry> entries) throws IOException {
         this.flushPolicy = logSupervisor;
         this.transactionLog = new TransactionLog(maxRecordCount);
-        this.flushPolicy.start(this::tryFlush);
+
+        // with entries, the new log replaces the file a symbolic link points to, not the link
+        final Path path = entries.isEmpty() || !Files.exists(logFile.toPath())
+                ? logFile.toPath() : logFile.toPath().toRealPath();
+        final Path tmp = entries.isEmpty() ? null : path.resolveSibling(path.getFileName() + ".tmp");
+        this.fileChannel = FileChannel.open(tmp == null ? path : tmp, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING);
+        try {
+            final Header header = Header.WA_DEFAULT_V1;
+            writeHeader(header);
+
+            final List<EntryInfo.CachedEntryInfo> entryInfos = new ArrayList<>(entries.size());
+            for (LogEntry entry : entries) {
+                entryInfos.add(append(entry));
+            }
+            this.initialEntryInfos = List.copyOf(entryInfos);
+
+            if (tmp != null) {
+                // the previous log is replaced only by a log that is on disk with its entries
+                flush();
+                replace(tmp, path);
+            }
+
+            this.flushPolicy.start(this::tryFlush);
+        } catch (IOException | RuntimeException e) {
+            try {
+                fileChannel.close();
+                if (tmp != null) {
+                    Files.deleteIfExists(tmp);
+                }
+            } catch (IOException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
+    }
+
+    private static void replace(Path source, Path target) throws IOException {
+        // the new log keeps the permissions of the previous one, as a truncated file would
+        if (Files.exists(target)) {
+            try {
+                Files.setPosixFilePermissions(source, Files.getPosixFilePermissions(target));
+            } catch (UnsupportedOperationException e) {
+                LOG.trace("The file system of {} has no POSIX permissions", target);
+            }
+        }
+
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            LOG.debug("Cannot move {} atomically, replacing {} instead", source, target);
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        // make the move itself durable, where the file system allows a directory to be forced
+        final Path directory = target.toAbsolutePath().getParent();
+        if (directory != null) {
+            try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ)) {
+                channel.force(true);
+            } catch (IOException e) {
+                LOG.debug("Cannot force the directory {} to disk: {}", directory, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * The entry information of the entries the new log was started with, in their order
+     */
+    List<EntryInfo.CachedEntryInfo> getInitialEntryInfos() {
+        return initialEntryInfos;
     }
 
     /**
