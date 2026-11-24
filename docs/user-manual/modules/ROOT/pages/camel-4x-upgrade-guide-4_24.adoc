@@ -12285,3 +12285,10 @@ The Kamelet catalog 4.24 adds these Kamelets:
   untrusted input or AI agents. A vector (`knn`) search works too.
 * `pgp-encrypt-action` and `pgp-decrypt-action` (Preview) encrypt and sign a message body with OpenPGP, and decrypt it
   and check its signature, with key rings given as `file:`, `classpath:` or `base64:` resources.
+
+=== camel-google-pubsub - a subscriber loop that ends with an error subscribes again
+
+A consumer no longer stops pulling for good after a non-retryable error of Google PubSub (such as `PERMISSION_DENIED`
+or `NOT_FOUND`), after credentials that cannot be loaded for the asynchronous subscriber, or after an `Error`: it logs
+the error and subscribes or pulls again after 5 seconds, until the route is stopped. Meanwhile the consumer health
+check reports `DOWN`. Before, the route stayed started without receiving anything until it was restarted.

@@ -19,6 +19,7 @@ package org.apache.camel.component.google.pubsub;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,6 +27,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -56,6 +59,7 @@ import org.apache.camel.spi.ShutdownAware;
 import org.apache.camel.spi.Synchronization;
 import org.apache.camel.support.DefaultConsumer;
 import org.apache.camel.support.UnitOfWorkHelper;
+import org.apache.camel.support.task.BackgroundTask;
 import org.apache.camel.support.task.Tasks;
 import org.apache.camel.support.task.budget.Budgets;
 import org.slf4j.Logger;
@@ -74,12 +78,26 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
      * pulling again, also when the consumer has been started again meanwhile.
      */
     private final AtomicLong generation = new AtomicLong();
+    /**
+     * How long a subscriber loop waits before it subscribes or pulls again after a failure.
+     */
+    private Duration retryDelay = Duration.ofSeconds(5);
+    /**
+     * The retry delays the subscriber loops wait in now: a stop ends them at once, as the loops do not pull again.
+     */
+    private final Set<BackgroundTask> retryWaits = ConcurrentHashMap.newKeySet();
     private ExecutorService executor;
     private ScheduledExecutorService taskExecutor;
     private final List<Subscriber> subscribers;
     private final Set<ApiFuture<PullResponse>> pendingSynchronousPullResponses;
     private final HeaderFilterStrategy headerFilterStrategy;
     private int resolvedMaxDeliveryAttempts;
+    /**
+     * The subscriber loops that ended with a failure and are not pulling: they wait for the retry delay before they
+     * subscribe or pull again, or they ended for good (interrupted, or a virtual machine error). Read by the health
+     * check.
+     */
+    private final Map<SubscriberWrapper, Throwable> failedLoops = new ConcurrentHashMap<>();
 
     GooglePubsubConsumer(GooglePubsubEndpoint endpoint, Processor processor) {
         super(endpoint, processor);
@@ -95,6 +113,14 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
 
         localLog = LoggerFactory.getLogger(loggerId);
         headerFilterStrategy = endpoint.getHeaderFilterStrategy();
+    }
+
+    @Override
+    protected void doInit() throws Exception {
+        super.doInit();
+        if (getHealthCheck() == null) {
+            setHealthCheck(new GooglePubsubConsumerHealthCheck(this, getRouteId()));
+        }
     }
 
     @Override
@@ -133,6 +159,7 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
         localLog.info("Stopping Google PubSub consumer for {}/{}", endpoint.getProjectId(), endpoint.getDestinationName());
 
         generation.incrementAndGet();
+        cancelRetryWaits();
         if (!subscribers.isEmpty()) {
             localLog.info("Stopping subscribers for {}/{}", endpoint.getProjectId(), endpoint.getDestinationName());
             subscribers.forEach(AbstractApiService::stopAsync);
@@ -168,6 +195,7 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
         // Note: when a stopRoute with abortAfterTimeout=true times out, the route is started again while this consumer
         // is still started, so doStart does not run and no loop pulls again until the route is stopped and started
         generation.incrementAndGet();
+        cancelRetryWaits();
         if (!subscribers.isEmpty()) {
             subscribers.forEach(AbstractApiService::stopAsync);
         }
@@ -183,6 +211,13 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
     @Override
     public void prepareShutdown(boolean suspendOnly, boolean forced) {
         // noop
+    }
+
+    private void cancelRetryWaits() {
+        // a loop that waits does not pull again after a stop: end the wait now instead of after the retry delay (in
+        // doShutdown the scheduler of the wait is shut down, which would leave the loop waiting until its thread is
+        // interrupted)
+        retryWaits.forEach(wait -> wait.cancel(false));
     }
 
     private void safeCancelSynchronousPullResponses() {
@@ -230,6 +265,13 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
         return resolvedMaxDeliveryAttempts;
     }
 
+    /**
+     * For tests: the retry delay of the subscriber loops (5 seconds by default), set before the consumer starts.
+     */
+    void setRetryDelay(Duration retryDelay) {
+        this.retryDelay = retryDelay;
+    }
+
     public void incrementPendingExchanges() {
         pendingExchanges.incrementAndGet();
     }
@@ -238,10 +280,25 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
         pendingExchanges.decrementAndGet();
     }
 
+    /**
+     * @return the failure of a subscriber loop of the current start that does not pull, or null when every loop pulls
+     */
+    Throwable getSubscriberLoopFailure() {
+        long current = generation.get();
+        for (Map.Entry<SubscriberWrapper, Throwable> failed : failedLoops.entrySet()) {
+            if (failed.getKey().wrapperGeneration == current) {
+                return failed.getValue();
+            }
+        }
+        return null;
+    }
+
     private class SubscriberWrapper implements Runnable {
 
         private final String subscriptionName;
         private final long wrapperGeneration;
+        // failed attempts since the last pull or subscription that worked; only used by the thread of this loop
+        private int failuresInARow;
 
         SubscriberWrapper(long wrapperGeneration) {
             this.wrapperGeneration = wrapperGeneration;
@@ -256,34 +313,86 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
             return isRunAllowed() && !isSuspendingOrSuspended() && wrapperGeneration == generation.get();
         }
 
+        /**
+         * Pulls until the consumer stops pulling. A failure that ends the pull (a non-retryable error, credentials that
+         * cannot be loaded for the subscriber, an Error) is logged, and the loop subscribes or pulls again after the
+         * retry delay; the health check of the consumer reports it meanwhile.
+         */
         @Override
         public void run() {
             try {
-                if (localLog.isDebugEnabled()) {
-                    localLog.debug("Subscribing to {}", subscriptionName);
-                }
+                while (isPullAllowed()) {
+                    long started = System.nanoTime();
+                    try {
+                        if (localLog.isDebugEnabled()) {
+                            localLog.debug("Subscribing to {}", subscriptionName);
+                        }
 
-                if (endpoint.isSynchronousPull()) {
-                    synchronousPull(subscriptionName);
-                } else {
-                    asynchronousPull(subscriptionName);
+                        if (endpoint.isSynchronousPull()) {
+                            synchronousPull(subscriptionName);
+                        } else {
+                            asynchronousPull(subscriptionName);
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        loopEnded(e);
+                        return;
+                    } catch (VirtualMachineError e) {
+                        loopEnded(e);
+                        throw e;
+                    } catch (Exception | Error e) {
+                        // also an Error, such as a NoClassDefFoundError of a client library: this loop runs in a
+                        // Future that nothing reads, so it would end without a trace
+                        loopFailed(e);
+                    }
+                    try {
+                        waitBeforeRetry(started);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        loopEnded(e);
+                        return;
+                    }
+                    failedLoops.remove(this);
                 }
-
                 localLog.debug("Exit run for subscription {}", subscriptionName);
-            } catch (Exception e) {
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                localLog.error("Failure getting messages from PubSub", e);
-
-                // allow camel error handler to be aware
-                if (endpoint.isBridgeErrorHandler()) {
-                    getExceptionHandler().handleException(e);
+            } finally {
+                // a loop that ended while the consumer still pulls stays reported by the health check
+                if (!isPullAllowed()) {
+                    failedLoops.remove(this);
                 }
             }
         }
 
-        private void asynchronousPull(String subscriptionName) throws IOException {
+        private void loopFailed(Throwable e) {
+            failedLoops.put(this, e);
+            if (!isPullAllowed()) {
+                localLog.debug("Failure getting messages from PubSub while stopping", e);
+                return;
+            }
+            logFailure("Failure getting messages from PubSub. Subscribing again within " + retryDelay.toMillis() + " ms.",
+                    e);
+
+            // allow camel error handler to be aware
+            if (endpoint.isBridgeErrorHandler()) {
+                getExceptionHandler().handleException(e);
+            }
+        }
+
+        private void loopEnded(Throwable e) {
+            failedLoops.put(this, e);
+            if (!isPullAllowed()) {
+                localLog.debug("Failure getting messages from PubSub while stopping", e);
+                return;
+            }
+            localLog.error("Failure getting messages from PubSub. The subscriber loop ends.", e);
+
+            // allow camel error handler to be aware
+            if (endpoint.isBridgeErrorHandler() && !(e instanceof VirtualMachineError)) {
+                getExceptionHandler().handleException(e);
+            }
+        }
+
+        private void asynchronousPull(String subscriptionName) throws Exception {
             while (isPullAllowed()) {
                 MessageReceiver messageReceiver = new CamelMessageReceiver(GooglePubsubConsumer.this, endpoint, processor);
 
@@ -297,6 +406,16 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
                     // a stop while the subscriber was starting missed it; stop it here or awaitTerminated never returns
                     if (!isPullAllowed()) {
                         subscriber.stopAsync();
+                    }
+                    if (failuresInARow > 0) {
+                        // a subscriber runs before its streaming pull is answered, so a subscription that does not
+                        // exist or a missing permission fails it right after the start: after failed attempts, it
+                        // only counts as working again once it has run for the retry delay
+                        try {
+                            subscriber.awaitTerminated(retryDelay.toMillis(), TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException e) {
+                            pulled();
+                        }
                     }
                     subscriber.awaitTerminated();
                 } catch (Exception e) {
@@ -313,20 +432,15 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
                         isRecoverable = ae.isRetryable();
                     }
 
-                    if (isRecoverable) {
-                        localLog.error("Retryable error getting messages from PubSub", e);
-                    } else {
-                        localLog.error("Non-recoverable error getting messages from PubSub, stopping subscriber loop", e);
+                    if (!isRecoverable) {
+                        // run() logs it, and subscribes again after the retry delay
+                        throw e;
                     }
+                    localLog.error("Retryable error getting messages from PubSub", e);
 
                     // allow camel error handler to be aware
                     if (endpoint.isBridgeErrorHandler()) {
                         getExceptionHandler().handleException(e);
-                    }
-
-                    // For non-recoverable errors, exit the loop
-                    if (!isRecoverable) {
-                        break;
                     }
 
                     // Add backoff delay for recoverable errors to prevent tight loop
@@ -334,7 +448,7 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
                     Tasks.backgroundTask()
                             .withBudget(Budgets.iterationTimeBudget()
                                     .withMaxIterations(1)
-                                    .withInitialDelay(Duration.ofSeconds(5))
+                                    .withInitialDelay(retryDelay)
                                     .withInterval(Duration.ofMillis(1))
                                     .withUnlimitedDuration()
                                     .build())
@@ -371,6 +485,7 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
                         synchronousPullResponseFuture.cancel(true);
                     }
                     PullResponse pullResponse = synchronousPullResponseFuture.get();
+                    pulled();
                     for (ReceivedMessage message : pullResponse.getReceivedMessagesList()) {
                         PubsubMessage pubsubMessage = message.getMessage();
                         Exchange exchange = createExchange(true);
@@ -480,6 +595,68 @@ public class GooglePubsubConsumer extends DefaultConsumer implements ShutdownAwa
                         pendingSynchronousPullResponses.remove(synchronousPullResponseFuture);
                     }
                 }
+            }
+        }
+
+        /**
+         * Logs a failed attempt: the first one in a row with its stack trace, the next ones in one line (the stack
+         * trace at DEBUG), as the loop retries until the cause is gone.
+         */
+        private void logFailure(String message, Throwable e) {
+            if (failuresInARow++ == 0) {
+                localLog.error(message, e);
+            } else {
+                localLog.warn("{} ({} failed attempts in a row: {})", message, failuresInARow, e.toString());
+                localLog.debug(message, e);
+            }
+        }
+
+        /**
+         * A pull or a subscription worked: logs once that the loop recovered from failed attempts.
+         */
+        private void pulled() {
+            if (failuresInARow > 0) {
+                localLog.info("Getting messages from PubSub {} again after {} failed attempts", subscriptionName,
+                        failuresInARow);
+                failuresInARow = 0;
+            }
+        }
+
+        /**
+         * Waits after a failed attempt until the retry delay has passed since the attempt started, so a loop makes at
+         * most one failed attempt per retry delay. An attempt that already took that long (a retryable error is only
+         * returned after the client library retried it for up to a minute) is followed by the next one at once. A stop
+         * of the consumer ends the wait.
+         */
+        private void waitBeforeRetry(long attemptStarted) throws InterruptedException {
+            long remaining = retryDelay.toMillis() - TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - attemptStarted);
+            ScheduledExecutorService scheduler = taskExecutor;
+            if (remaining <= 0 || scheduler == null || !isPullAllowed()) {
+                return;
+            }
+            BackgroundTask wait = Tasks.backgroundTask()
+                    .withBudget(Budgets.iterationTimeBudget()
+                            .withMaxIterations(1)
+                            .withInitialDelay(Duration.ofMillis(remaining))
+                            .withInterval(Duration.ofMillis(1))
+                            .withUnlimitedDuration()
+                            .build())
+                    .withScheduledExecutor(scheduler)
+                    .withName("PubSubRetryDelay")
+                    .build();
+            retryWaits.add(wait);
+            try {
+                // a stop cancels the waits in retryWaits after it stopped the pulling: a stop that came before this
+                // wait was added is seen here, a later one cancels it (also before it runs, then it returns at once)
+                if (isPullAllowed()) {
+                    wait.run(getEndpoint().getCamelContext(), () -> true);
+                }
+            } finally {
+                retryWaits.remove(wait);
+            }
+            // the wait returns at once when the thread is interrupted (shutdown): end the loop instead of retrying
+            if (Thread.interrupted()) {
+                throw new InterruptedException("Interrupted while waiting to get messages from PubSub again");
             }
         }
     }
