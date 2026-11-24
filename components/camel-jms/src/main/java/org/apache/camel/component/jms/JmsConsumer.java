@@ -53,8 +53,13 @@ public class JmsConsumer extends DefaultConsumer implements Suspendable {
     private volatile boolean initialized;
     private volatile ExecutorService executorService;
     private volatile boolean shutdownExecutorService;
-    // makes the ownership check of the asynchronous start task atomic with the detach in doStop
+    // makes the ownership check of the asynchronous start task atomic with the detach in doStop, and with
+    // doSuspend and doResume
     private final Lock containerLock = new ReentrantLock();
+    // guarded by containerLock: doStart counted the current listener container as running on the endpoint
+    private boolean listenerContainerCounted;
+    // guarded by containerLock: an asynchronous start task of the current listener container has not finished
+    private boolean asyncStartPending;
 
     public JmsConsumer(JmsEndpoint endpoint, Processor processor, AbstractMessageListenerContainer listenerContainer) {
         super(endpoint, processor);
@@ -166,27 +171,55 @@ public class JmsConsumer extends DefaultConsumer implements Suspendable {
         final AbstractMessageListenerContainer container = listenerContainer;
         warnIfTopicConsumersDoNotShareSubscription(container);
         getEndpoint().onListenerContainerStarting();
+        containerLock.lock();
+        try {
+            listenerContainerCounted = true;
+        } finally {
+            containerLock.unlock();
+        }
+        prepareAndStartListenerContainer(container, getEndpoint().getConfiguration().isAsyncStartListener());
+    }
 
-        if (getEndpoint().getConfiguration().isAsyncStartListener()) {
-            getEndpoint().getAsyncStartStopExecutorService().submit(new Runnable() {
-                @Override
-                public void run() {
+    /**
+     * Initializes and starts the listener container, in a task of the component's async start/stop thread pool when
+     * async is true, otherwise on the calling thread.
+     */
+    private void prepareAndStartListenerContainer(AbstractMessageListenerContainer container, boolean async) {
+        if (!async) {
+            prepareAndStartListenerContainer(container);
+            return;
+        }
+        containerLock.lock();
+        try {
+            asyncStartPending = true;
+        } finally {
+            containerLock.unlock();
+        }
+        getEndpoint().getAsyncStartStopExecutorService().submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    prepareAndStartListenerContainer(container);
+                } catch (Exception e) {
+                    LOG.warn("Error starting listener container on destination: {}. This exception will be ignored.",
+                            getDestinationName(container), e);
+                } finally {
+                    containerLock.lock();
                     try {
-                        prepareAndStartListenerContainer(container);
-                    } catch (Exception e) {
-                        LOG.warn("Error starting listener container on destination: {}. This exception will be ignored.",
-                                getDestinationName(container), e);
+                        if (listenerContainer == container) {
+                            asyncStartPending = false;
+                        }
+                    } finally {
+                        containerLock.unlock();
                     }
                 }
+            }
 
-                @Override
-                public String toString() {
-                    return "AsyncStartListenerTask[" + getDestinationName(container) + "]";
-                }
-            });
-        } else {
-            prepareAndStartListenerContainer(container);
-        }
+            @Override
+            public String toString() {
+                return "AsyncStartListenerTask[" + getDestinationName(container) + "]";
+            }
+        });
     }
 
     protected void prepareAndStartListenerContainer() {
@@ -237,26 +270,51 @@ public class JmsConsumer extends DefaultConsumer implements Suspendable {
             return;
         }
 
-        container.afterPropertiesSet();
-
         // only start listener if auto start is enabled or we are explicit invoking start later
-        if (initialized || getEndpoint().isAutoStartup()) {
-            // should we pre test connections before starting?
-            if (getEndpoint().isTestConnectionOnStartup()) {
-                testConnectionOnStartup(container);
-            }
-            startListenerContainer(container);
+        boolean autoStart = initialized || getEndpoint().isAutoStartup();
+        // the consumer may have been suspended before this asynchronous start ran: it is started when resumed
+        boolean start = autoStart && !isSuspendingOrSuspended();
+
+        // initialize only once: every initialization of a DefaultMessageListenerContainer schedules another
+        // concurrentConsumers invokers. The container is already active when an earlier start of it failed
+        // (testConnectionOnStartup) and the consumer was suspended and resumed
+        if (!container.isActive()) {
+            container.afterPropertiesSet();
         }
 
-        containerLock.lock();
-        try {
-            if (listenerContainer == container) {
+        while (true) {
+            if (start) {
+                // should we pre test connections before starting?
+                if (getEndpoint().isTestConnectionOnStartup()) {
+                    testConnectionOnStartup(container);
+                }
+                startListenerContainer(container);
+            }
+
+            containerLock.lock();
+            try {
+                if (listenerContainer != container) {
+                    break;
+                }
+                if (isSuspendingOrSuspended()) {
+                    // suspended while this task was starting the container, and doSuspend may have run before
+                    // container.start(): stop it here, the resume starts it again
+                    if (container.isRunning()) {
+                        LOG.debug("Stopping listener container {} on destination {} as the consumer was suspended",
+                                container, getDestinationName(container));
+                        container.stop();
+                    }
+                } else if (autoStart && !container.isRunning()) {
+                    // resumed after this task skipped the start of the suspended consumer: start it now
+                    start = true;
+                    continue;
+                }
                 // mark as initialized after the auto-startup check
                 initialized = true;
                 return;
+            } finally {
+                containerLock.unlock();
             }
-        } finally {
-            containerLock.unlock();
         }
         // the consumer was stopped while this task was starting the container, and its stop may have run before
         // container.start(): stop and destroy it here
@@ -297,6 +355,8 @@ public class JmsConsumer extends DefaultConsumer implements Suspendable {
             listenerContainer = null;
             messageListener = null;
             initialized = false;
+            listenerContainerCounted = false;
+            asyncStartPending = false;
             executorService = null;
             return answer;
         } finally {
@@ -352,23 +412,54 @@ public class JmsConsumer extends DefaultConsumer implements Suspendable {
 
     @Override
     protected void doSuspend() throws Exception {
-        if (listenerContainer != null) {
-            listenerContainer.stop();
+        // under the lock: a pending asynchronous start checks under the lock whether the consumer was suspended
+        containerLock.lock();
+        try {
+            if (listenerContainer != null) {
+                listenerContainer.stop();
+            }
+        } finally {
+            containerLock.unlock();
         }
     }
 
     @Override
     protected void doResume() throws Exception {
-        // we may not have been started before, and now the end user calls resume, so lets handle that and start it first
-        if (!initialized) {
-            doStart();
-        } else {
-            if (listenerContainer != null) {
-                startListenerContainer();
-            } else {
-                LOG.warn(
-                        "The listenerContainer is not instantiated. Probably there was a timeout during the Suspend operation. Please restart your consumer route.");
+        final AbstractMessageListenerContainer container;
+        final boolean wasInitialized;
+        final boolean startAgain;
+        containerLock.lock();
+        try {
+            container = listenerContainer;
+            wasInitialized = initialized;
+            if (!wasInitialized && asyncStartPending) {
+                // the asynchronous start of the listener container has not finished yet: it starts the container,
+                // as the consumer is no longer suspended
+                LOG.debug("Resuming consumer on destination {} while the asynchronous start of its listener container"
+                          + " is pending",
+                        getDestinationName(container));
+                return;
             }
+            // the listener container was started and counted before, but its start failed (for example
+            // testConnectionOnStartup with asyncStartListener=true)
+            startAgain = !wasInitialized && listenerContainerCounted;
+        } finally {
+            containerLock.unlock();
+        }
+
+        if (startAgain) {
+            // start the same listener container again: it is already counted as running on the endpoint
+            LOG.info("Starting listener container on destination {} again, as its earlier start did not complete",
+                    getDestinationName(container));
+            prepareAndStartListenerContainer(container, getEndpoint().getConfiguration().isAsyncStartListener());
+        } else if (!wasInitialized) {
+            // we may not have been started before, and now the end user calls resume, so lets handle that and start it first
+            doStart();
+        } else if (container != null) {
+            startListenerContainer(container);
+        } else {
+            LOG.warn(
+                    "The listenerContainer is not instantiated. Probably there was a timeout during the Suspend operation. Please restart your consumer route.");
         }
     }
 
