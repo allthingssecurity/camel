@@ -52,6 +52,8 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
     private volatile boolean stopWorkerPool;
     private volatile TimeoutMap<String, NettyCamelState> map;
     private volatile CamelLogger timeoutLogger;
+    // the producers that use this manager (guarded by the lock of the service)
+    private int users;
 
     private CamelContext camelContext;
     private long timeout = 30000;
@@ -137,6 +139,11 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
 
     @Override
     public void putState(Channel channel, NettyCamelState state) {
+        TimeoutMap<String, NettyCamelState> current = map;
+        if (current == null || !isRunAllowed()) {
+            // the timeout of a request in the map of a stopped manager never fires: fail the request instead
+            throw new IllegalStateException("The correlation manager is not started");
+        }
         // grab the correlation id
         Object body = state.getExchange().getMessage().getBody();
         // the correlation id is the first part of the message
@@ -145,7 +152,12 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
             throw new IllegalArgumentException("CorrelationID is missing");
         }
         LOG.debug("putState({}) on channel: {}", cid, channel.id());
-        map.put(cid, state, timeout);
+        current.put(cid, state, timeout);
+        if (!isRunAllowed() && current.remove(cid) == state) {
+            // the manager is stopping, and its stop did not complete this request (it was put after the stop drained
+            // the map, or the drain is still to come and the request was taken back here): fail the request instead
+            throw new IllegalStateException("The correlation manager is not started");
+        }
     }
 
     @Override
@@ -169,6 +181,38 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
     public NettyCamelState getState(ChannelHandlerContext ctx, Channel channel, Throwable cause) {
         // noop
         return null;
+    }
+
+    /**
+     * Takes a reference on this manager for a producer that uses it, and starts the manager when it is not started. A
+     * manager configured as a bean can be used by several producers, which must not stop it under each other.
+     */
+    void retain() {
+        lock.lock();
+        try {
+            ServiceHelper.startService(this);
+            users++;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Releases the reference a producer took with {@link #retain()}. The last producer that releases the manager stops
+     * it, which completes the requests that still wait for their reply.
+     */
+    void release() {
+        lock.lock();
+        try {
+            if (users > 0) {
+                users--;
+                if (users == 0) {
+                    ServiceHelper.stopService(this);
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
