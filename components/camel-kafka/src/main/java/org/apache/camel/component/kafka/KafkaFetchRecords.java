@@ -396,7 +396,11 @@ public class KafkaFetchRecords implements Runnable {
                  */
                 lock.lock();
                 try {
-                    if (consumerListener != null) {
+                    // the listener of the pausable EIP resumes the consumer when its check holds: not when the route
+                    // is suspended and the pause was applied (the poll then returned no records), as the suspended
+                    // route would consume again from the next poll
+                    boolean listenerSkipped = consumerListener != null && isPaused();
+                    if (consumerListener != null && !listenerSkipped) {
                         if (!consumerListener.afterConsume(consumer)) {
                             continue;
                         }
@@ -406,7 +410,11 @@ public class KafkaFetchRecords implements Runnable {
                     if (result != null && result.getTopic() != null) {
                         metricsCollector.storeLastRecord(result);
                     }
-                    updateTaskState();
+                    // a resume requested while the listener was skipped is applied on the next iteration, after the
+                    // listener: while its check fails, the consumer stays paused
+                    if (!listenerSkipped) {
+                        updateTaskState();
+                    }
 
                     // when breakOnFirstError we want to unsubscribe from Kafka, also when the consumer was just paused
                     // (the new Kafka consumer is paused again)
