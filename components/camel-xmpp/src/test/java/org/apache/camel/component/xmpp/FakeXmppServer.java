@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -63,7 +64,16 @@ final class FakeXmppServer implements AutoCloseable {
     private volatile boolean running = true;
 
     FakeXmppServer() throws IOException {
-        serverSocket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
+        this(0);
+    }
+
+    /**
+     * A server on the given port (0 for any free port), to start a server where a client already tries to connect.
+     */
+    FakeXmppServer(int port) throws IOException {
+        serverSocket = new ServerSocket();
+        serverSocket.setReuseAddress(true);
+        serverSocket.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 50);
         Thread acceptor = new Thread(this::accept, "fake-xmpp-acceptor");
         acceptor.setDaemon(true);
         acceptor.start();
