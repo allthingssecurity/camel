@@ -17,7 +17,8 @@
 package org.apache.camel.processor;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -44,6 +45,7 @@ import org.apache.camel.spi.StepIdAware;
 import org.apache.camel.support.AsyncProcessorConverterHelper;
 import org.apache.camel.support.service.ServiceHelper;
 import org.apache.camel.util.ObjectHelper;
+import org.apache.camel.util.URISupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -68,6 +70,9 @@ public class WireTapProcessor extends BaseProcessorSupport
     private final ExecutorService executorService;
     private final boolean shutdownExecutorService;
     private final LongAdder taskCount = new LongAdder();
+    // the tasks that are submitted and not yet started: the task, process (when the thread pool is shut down) and
+    // doShutdown each claim a task by removing it, so a tapped exchange is sent, or counted as lost, but never both
+    private final Set<WireTapTask> pendingTasks = ConcurrentHashMap.newKeySet();
     private ProcessorExchangeFactory processorExchangeFactory;
     private PooledExchangeTaskFactory taskFactory;
     private Processor onPrepare;
@@ -113,8 +118,26 @@ public class WireTapProcessor extends BaseProcessorSupport
 
         @Override
         public void run() {
+            if (!pendingTasks.remove(this)) {
+                // the tapped exchange was already counted as lost, as the thread pool was shut down
+                return;
+            }
             LOG.debug(">>>> (wiretap) {} {}", uri, exchange);
             asyncProcessor.process(exchange, callback);
+        }
+
+        /**
+         * The task will not run as the thread pool is shut down: the tapped exchange is no longer pending, and is
+         * released.
+         */
+        private void notRun() {
+            taskCount.decrement();
+            if (processorExchangeFactory != null) {
+                processorExchangeFactory.release(exchange);
+            }
+            // the task itself is not released to the task factory: it may still be in the queue of a thread pool
+            // that is shut down gracefully, and when it runs it must find itself claimed, not reused for another
+            // exchange
         }
     }
 
@@ -213,18 +236,30 @@ public class WireTapProcessor extends BaseProcessorSupport
         // count the task as pending from when it is submitted (not when it starts to run), so a graceful shutdown
         // also waits for the tapped exchanges that are waiting in the thread pool queue
         taskCount.increment();
+        WireTapTask tapTask = null;
         try {
             // create task which has state used during routing
-            Runnable task = taskFactory.acquire(target, null);
+            tapTask = (WireTapTask) taskFactory.acquire(target, null);
+            pendingTasks.add(tapTask);
             // Deprecated since 4.19.0
-            task = ProcessorHelper.prepareMDCParallelTask(camelContext, task);
+            Runnable task = ProcessorHelper.prepareMDCParallelTask(camelContext, tapTask);
             executorService.submit(task);
         } catch (Exception e) {
             // the task will not run
-            taskCount.decrement();
+            if (tapTask == null || pendingTasks.remove(tapTask)) {
+                taskCount.decrement();
+            }
             // in case the thread pool rejects or cannot submit the task then we need to catch
             // so camel error handler can react
             exchange.setException(e);
+        }
+        if (tapTask != null && executorService.isShutdown() && pendingTasks.remove(tapTask)) {
+            // the thread pool was shut down before or while the task was handed to it (such as a shared thread pool
+            // shut down by its owner): the CallerRuns policy (the default) drops the task without an exception, and
+            // the Block policy may have put it into the queue of a thread pool that no longer runs it
+            LOG.warn("The wire tap to {} is lost for exchangeId: {} as the thread pool is shut down: {}",
+                    URISupport.sanitizeUri(uri), exchange.getExchangeId(), executorService);
+            tapTask.notRun();
         }
 
         // continue routing this synchronously
@@ -381,10 +416,13 @@ public class WireTapProcessor extends BaseProcessorSupport
     protected void doShutdown() throws Exception {
         ServiceHelper.stopAndShutdownServices(processorExchangeFactory, taskFactory, processor);
         if (shutdownExecutorService) {
-            List<Runnable> dropped = getCamelContext().getExecutorServiceManager().shutdownNow(executorService);
-            if (dropped != null && !dropped.isEmpty()) {
-                // the tasks still queued in the thread pool will never run, so they are no longer pending
-                taskCount.add(-dropped.size());
+            getCamelContext().getExecutorServiceManager().shutdownNow(executorService);
+            // the tasks still queued in the thread pool will never run, so they are no longer pending (a thread pool
+            // of the user is not shut down here, and still runs them)
+            for (WireTapTask task : pendingTasks) {
+                if (pendingTasks.remove(task)) {
+                    taskCount.decrement();
+                }
             }
         }
     }
