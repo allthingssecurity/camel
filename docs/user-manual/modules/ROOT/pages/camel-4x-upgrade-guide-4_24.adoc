@@ -9293,6 +9293,17 @@ logs a warning the first time. Before, the consumer restored the headers and exc
 Set `transferExchange=true` on both the producer and the consumer endpoints to keep transferring the headers and
 exchange properties.
 
+=== camel-hazelcast - HazelcastAggregationRepository with optimistic=true completes the groups it stores
+
+`HazelcastAggregationRepository` with `optimistic=true` now completes the groups it stores in the Aggregate EIP. Before,
+a group of two or more messages was never completed: the message that completed it failed with "Exhausted optimistic
+locking retry attempts" (with the default retry policy it was retried forever), and a group completed by a timeout was
+left in the map and never sent, without an error.
+
+Groups that were left in the map this way are completed after the upgrade: with a completion timeout, the timeout of
+each such group starts again when the route starts; with a completion size, the next message of the correlation key
+completes the group, together with the messages that were stored before.
+
 === camel-knative - a structured CloudEvent whose Content-Type has parameters
 
 The consumer now finds the content mode of a CloudEvent by the media type of the `Content-Type` header, ignoring its

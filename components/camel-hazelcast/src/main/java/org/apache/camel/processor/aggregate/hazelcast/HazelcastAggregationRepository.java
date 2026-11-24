@@ -17,7 +17,9 @@
 package org.apache.camel.processor.aggregate.hazelcast;
 
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.TimeUnit;
 
 import com.hazelcast.config.Config;
@@ -92,6 +94,12 @@ public class HazelcastAggregationRepository extends ServiceSupport
     @Metadata(label = "advanced", security = "insecure:serialization",
               description = "Whether headers on the Exchange that are Java objects and Serializable should be included and saved to the repository")
     protected boolean allowSerializedHeaders;
+
+    // optimistic locking: the groups that get() returned, each with the key and the holder of the group as it was read
+    private final Map<Exchange, ReadGroup> readGroups = Collections.synchronizedMap(new WeakHashMap<>());
+
+    private record ReadGroup(String key, DefaultExchangeHolder holder) {
+    }
 
     public HazelcastAggregationRepository() {
     }
@@ -216,7 +224,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
                 throw new OptimisticLockingException();
             }
         } else {
-            DefaultExchangeHolder oldHolder = DefaultExchangeHolder.marshal(oldExchange, true, allowSerializedHeaders);
+            DefaultExchangeHolder oldHolder = readHolder(key, oldExchange);
             DefaultExchangeHolder newHolder = DefaultExchangeHolder.marshal(newExchange, true, allowSerializedHeaders);
             if (!cache.replace(key, oldHolder, newHolder)) {
                 LOG.error(
@@ -313,9 +321,37 @@ public class HazelcastAggregationRepository extends ServiceSupport
         return maximumRedeliveries;
     }
 
+    /**
+     * Gets the group of the correlation key.
+     * <p>
+     * With optimistic locking, {@link #add(CamelContext, String, Exchange, Exchange)} and
+     * {@link #remove(CamelContext, String, Exchange)} compare the stored group with the group as this method read it,
+     * not with the exchange they are given: the Aggregate EIP sets properties on the group before it removes it, and an
+     * aggregation strategy may change the group and return it. A strategy must not change an object that the group
+     * holds (such as adding to a list in its body), but set a new value instead, as the stored group is compared by its
+     * serialized form.
+     */
     @Override
     public Exchange get(CamelContext camelContext, String key) {
-        return unmarshallExchange(camelContext, cache.get(key));
+        Exchange exchange = unmarshallExchange(camelContext, cache.get(key));
+        if (optimistic && exchange != null) {
+            // keep the group as it was read, before the caller changes the exchange, to compare the stored group with
+            readGroups.put(exchange,
+                    new ReadGroup(key, DefaultExchangeHolder.marshal(exchange, true, allowSerializedHeaders)));
+        }
+        return exchange;
+    }
+
+    /**
+     * The holder to compare the stored group with, for an optimistic update or remove of the group that the exchange
+     * stands for: the group as {@link #get} read it for this key, or else the exchange as it is now.
+     */
+    private DefaultExchangeHolder readHolder(String key, Exchange exchange) {
+        ReadGroup read = readGroups.remove(exchange);
+        if (read != null && read.key().equals(key)) {
+            return read.holder();
+        }
+        return DefaultExchangeHolder.marshal(exchange, true, allowSerializedHeaders);
     }
 
     /**
@@ -385,7 +421,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
                     TransactionalMap<String, DefaultExchangeHolder> tCache = tCtx.getMap(cache.getName());
                     TransactionalMap<String, DefaultExchangeHolder> tPersistentCache = tCtx.getMap(persistedCache.getName());
 
-                    if (!tCache.remove(key, holder)) {
+                    if (!tCache.remove(key, readHolder(key, exchange))) {
                         tCtx.rollbackTransaction();
                         LOG.error(
                                 "Optimistic locking failed for exchange with key {}: TransactionalMap#remove returned false (compare-and-delete found no matching entry).",
@@ -415,7 +451,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
                     throw new RuntimeCamelException(msg, exception);
                 }
             } else {
-                if (!cache.remove(key, holder)) {
+                if (!cache.remove(key, readHolder(key, exchange))) {
                     LOG.error(
                             "Optimistic locking failed for exchange with key {}: IMap#remove returned false (compare-and-delete found no matching entry).",
                             key);
@@ -526,6 +562,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
 
     @Override
     protected void doStop() throws Exception {
+        readGroups.clear();
         if (useLocalHzInstance) {
             hazelcastInstance.getLifecycleService().shutdown();
             hazelcastInstance = null;
