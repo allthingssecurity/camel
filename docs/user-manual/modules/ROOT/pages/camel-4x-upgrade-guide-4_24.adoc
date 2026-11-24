@@ -9293,6 +9293,42 @@ logs a warning the first time. Before, the consumer restored the headers and exc
 Set `transferExchange=true` on both the producer and the consumer endpoints to keep transferring the headers and
 exchange properties.
 
+=== camel-hazelcast - HazelcastAggregationRepository with optimistic=true completes the groups it stores
+
+`HazelcastAggregationRepository` with `optimistic=true` now completes the groups it stores in the Aggregate EIP. Before,
+a group of two or more messages was never completed: the message that completed it failed with "Exhausted optimistic
+locking retry attempts" (with the default retry policy it was retried forever), and a group completed by a timeout was
+left in the map and never sent, without an error. This includes aggregation strategies that change an object of the
+group in place, such as `GroupedBodyAggregationStrategy` (which needs `allowSerializedHeaders=true`, in any mode, as its
+list is an exchange property), and groups that hold a value whose serialized form changes when it is written again, such
+as a `HashSet` (for example with `AggregationStrategies.flexible().accumulateInCollection(HashSet.class)`).
+
+The repository no longer compares the stored group with the exchange it is given in serialized form. `get` keeps the
+version of the Hazelcast entry it read, with the exchange id and the aggregated size of the group, and `add` and `remove`
+lock the key, check that the entry still has that version, exchange id and aggregated size, and write while they hold the
+lock. The aggregated size is checked because Hazelcast starts the version of an entry again at 0 when it is loaded from a
+map store, after an eviction or a reload of the map. The lock is held only for that check and the write, not while the
+group is aggregated; a group changed by another aggregator still fails with an `OptimisticLockingException` and is
+retried as before. Each update of a stored group takes a few more calls to the cluster than one `IMap.replace`, and each
+new group one more call. The stored data is not changed, and the members of a cluster that Camel joins as a Hazelcast
+client need no Camel classes for this. During a rolling upgrade, the compare-and-set of a member that runs an earlier
+version waits for this lock too.
+
+An update waits for the lock of the key at most `optimisticLockTimeout` (new option, 10000 millis by default), and then
+fails with an `OptimisticLockingException`, so the Aggregate EIP tries again as its optimistic lock retry policy says.
+The wait is only long when the aggregator that holds the lock hangs while it writes (a frozen JVM, a map store that does
+not answer): Hazelcast releases the lock when it removes that member or client from the cluster, which takes about a
+minute for a member and longer for a client with the default settings, and until then the group of that key is not
+updated. A completion by timeout that fails this way is given up, as when another aggregator changed the group: the
+group gets a new timeout with the next message of its key, or when the route starts again.
+
+Groups that were left in the map this way are completed after the upgrade: with a completion timeout, the timeout of
+each such group starts again when the route starts; with a completion size, the next message of the correlation key
+completes the group, together with the messages that were stored before.
+
+`GroupedExchangeAggregationStrategy` and `GroupedMessageAggregationStrategy` still cannot be used with
+`HazelcastAggregationRepository`, in either mode: their list holds exchanges or messages, which cannot be serialized.
+
 === camel-knative - a structured CloudEvent whose Content-Type has parameters
 
 The consumer now finds the content mode of a CloudEvent by the media type of the `Content-Type` header, ignoring its

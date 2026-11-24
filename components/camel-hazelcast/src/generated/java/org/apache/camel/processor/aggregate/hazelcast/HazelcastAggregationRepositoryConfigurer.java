@@ -32,6 +32,8 @@ public class HazelcastAggregationRepositoryConfigurer extends org.apache.camel.s
         case "hazelcastInstance": target.setHazelcastInstance(property(camelContext, com.hazelcast.core.HazelcastInstance.class, value)); return true;
         case "maximumredeliveries":
         case "maximumRedeliveries": target.setMaximumRedeliveries(property(camelContext, int.class, value)); return true;
+        case "optimisticlocktimeout":
+        case "optimisticLockTimeout": target.setOptimisticLockTimeout(property(camelContext, long.class, value)); return true;
         case "recoveryinterval":
         case "recoveryInterval": target.setRecoveryInterval(property(camelContext, long.class, value)); return true;
         case "userecovery":
@@ -51,6 +53,8 @@ public class HazelcastAggregationRepositoryConfigurer extends org.apache.camel.s
         case "hazelcastInstance": return com.hazelcast.core.HazelcastInstance.class;
         case "maximumredeliveries":
         case "maximumRedeliveries": return int.class;
+        case "optimisticlocktimeout":
+        case "optimisticLockTimeout": return long.class;
         case "recoveryinterval":
         case "recoveryInterval": return long.class;
         case "userecovery":
@@ -71,6 +75,8 @@ public class HazelcastAggregationRepositoryConfigurer extends org.apache.camel.s
         case "hazelcastInstance": return target.getHazelcastInstance();
         case "maximumredeliveries":
         case "maximumRedeliveries": return target.getMaximumRedeliveries();
+        case "optimisticlocktimeout":
+        case "optimisticLockTimeout": return target.getOptimisticLockTimeout();
         case "recoveryinterval":
         case "recoveryInterval": return target.getRecoveryInterval();
         case "userecovery":
