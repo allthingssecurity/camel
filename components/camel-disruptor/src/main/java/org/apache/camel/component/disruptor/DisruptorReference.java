@@ -20,15 +20,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.WeakHashMap;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -77,8 +76,15 @@ public class DisruptorReference {
 
     private final DisruptorWaitStrategy waitStrategy;
 
-    private final Queue<Exchange> temporaryExchangeBuffer;
+    // the exchanges taken from the ring buffer of a Disruptor without consumer when it is shut down, for the next
+    // Disruptor: not bounded, as the producers that waited on its full ring buffer publish on it before it is shut down
+    private final Queue<Exchange> temporaryExchangeBuffer = new LinkedBlockingQueue<>();
     private final Lock lock = new ReentrantLock();
+
+    // the producers that have read the current Disruptor and not yet published on its ring buffer (or failed to): a
+    // reconfiguration clears the reference, then waits for them before it drains and halts the Disruptor, so that no
+    // exchange is published on a ring buffer whose event handlers have been halted
+    private final AtomicInteger publishesInFlight = new AtomicInteger();
 
     //access guarded by this
     private ExecutorService executor;
@@ -102,7 +108,6 @@ public class DisruptorReference {
         this.size = size;
         this.producerType = producerType;
         this.waitStrategy = waitStrategy;
-        temporaryExchangeBuffer = new ArrayBlockingQueue<>(size);
         reconfigure();
     }
 
@@ -135,11 +140,47 @@ public class DisruptorReference {
     }
 
     public void tryPublish(final Exchange exchange) throws DisruptorNotStartedException, InsufficientCapacityException {
-        tryPublishExchangeOnRingBuffer(exchange, getCurrentDisruptor().getRingBuffer());
+        final RingBuffer<ExchangeEvent> ringBuffer = beginPublish();
+        try {
+            tryPublishExchangeOnRingBuffer(exchange, ringBuffer);
+        } finally {
+            publishesInFlight.decrementAndGet();
+        }
     }
 
     public void publish(final Exchange exchange) throws DisruptorNotStartedException {
-        publishExchangeOnRingBuffer(exchange, getCurrentDisruptor().getRingBuffer());
+        final RingBuffer<ExchangeEvent> ringBuffer = beginPublish();
+        try {
+            publishExchangeOnRingBuffer(exchange, ringBuffer);
+        } finally {
+            publishesInFlight.decrementAndGet();
+        }
+    }
+
+    /**
+     * The ring buffer of the current Disruptor, waiting while the Disruptor is being reconfigured. The caller is
+     * counted in {@link #publishesInFlight}, and must decrement it once it has published on the ring buffer, or failed
+     * to.
+     */
+    private RingBuffer<ExchangeEvent> beginPublish() throws DisruptorNotStartedException {
+        while (true) {
+            // count, then read the reference: a reconfiguration clears the reference, then waits until the count is 0, so
+            // either it waits for this producer, or this producer sees the cleared reference
+            publishesInFlight.incrementAndGet();
+            final Disruptor<ExchangeEvent> currentDisruptor = disruptor.getReference();
+            if (currentDisruptor != null) {
+                return currentDisruptor.getRingBuffer();
+            }
+            publishesInFlight.decrementAndGet();
+            // wait for the reconfiguration to end without being counted (or fail if the Disruptor is not started)
+            getCurrentDisruptor();
+        }
+    }
+
+    private void awaitPublishesInFlight() {
+        while (publishesInFlight.get() > 0) {
+            LockSupport.parkNanos(1000L);
+        }
     }
 
     private void publishExchangeOnRingBuffer(
@@ -202,9 +243,25 @@ public class DisruptorReference {
             }
         }
 
-        publishBufferedExchanges(newDisruptor);
+        // a Disruptor without consumer would only take the buffered exchanges back into the buffer when it is shut down,
+        // so they stay buffered, in order, for the first consumer
+        final boolean hasConsumers = getBlockingEventHandler() == null;
+        if (hasConsumers) {
+            // the buffered exchanges go first: as many as the ring buffer holds, before the producers can use it
+            publishBufferedExchanges(newDisruptor.getRingBuffer());
+        }
 
         disruptor.set(newDisruptor, false);
+
+        if (hasConsumers) {
+            // and the rest (the buffer holds more exchanges than the ring buffer when producers waited on the full ring
+            // buffer of a Disruptor without consumer) as producers do, now that a consumer that publishes to this
+            // Disruptor itself, which waits while the reference is cleared, can do so
+            Exchange exchange;
+            while ((exchange = temporaryExchangeBuffer.poll()) != null) {
+                publish(exchange);
+            }
+        }
     }
 
     private Disruptor<ExchangeEvent> createDisruptor() throws Exception {
@@ -253,17 +310,21 @@ public class DisruptorReference {
         newDisruptor.handleEventsWith(handlers);
     }
 
-    private void publishBufferedExchanges(Disruptor<ExchangeEvent> newDisruptor) {
-        //now empty out all buffered Exchange if we had any
-        final List<Exchange> exchanges = new ArrayList<>(temporaryExchangeBuffer.size());
-        while (!temporaryExchangeBuffer.isEmpty()) {
-            exchanges.add(temporaryExchangeBuffer.remove());
-        }
-        RingBuffer<ExchangeEvent> ringBuffer = newDisruptor.getRingBuffer();
-        //and offer them again to our new ringbuffer
-        for (final Exchange exchange : exchanges) {
+    private void publishBufferedExchanges(RingBuffer<ExchangeEvent> ringBuffer) {
+        Exchange exchange;
+        while (ringBuffer.remainingCapacity() > 0 && (exchange = temporaryExchangeBuffer.poll()) != null) {
             publishExchangeOnRingBuffer(exchange, ringBuffer);
         }
+    }
+
+    /**
+     * The event handler that keeps a Disruptor without consumer busy, or null if the Disruptor has consumers.
+     */
+    private BlockingExchangeEventHandler getBlockingEventHandler() {
+        if (handlers.length == 1 && handlers[0] instanceof BlockingExchangeEventHandler blockingExchangeEventHandler) {
+            return blockingExchangeEventHandler;
+        }
+        return null;
     }
 
     /**
@@ -334,12 +395,18 @@ public class DisruptorReference {
 
             if (currentDisruptor != null) {
                 //check if we had a blocking event handler to keep an empty disruptor 'busy'
-                if (handlers != null && handlers.length == 1
-                        && handlers[0] instanceof BlockingExchangeEventHandler blockingExchangeEventHandler) {
+                BlockingExchangeEventHandler blockingExchangeEventHandler = getBlockingEventHandler();
+                if (blockingExchangeEventHandler != null) {
                     // yes we did, unblock it so we can get rid of our backlog,
                     // The eventhandler will empty its pending exchanges in our temporary buffer
                     blockingExchangeEventHandler.unblock();
                 }
+
+                // the producers that read the reference before it was cleared publish on this ring buffer, also those
+                // that wait for a free slot on a full ring buffer (the event handlers keep running until the shutdown
+                // below, and a blocking event handler was unblocked above): wait for them, so the shutdown drains their
+                // exchanges, instead of halting the event handlers before they are published
+                awaitPublishesInFlight();
 
                 currentDisruptor.shutdown();
 
@@ -530,6 +597,7 @@ public class DisruptorReference {
                 // the producer no longer waits for this exchange (timeout), so don't process it
                 LOGGER.trace("Ignoring exchange {}", exchange);
             } else {
+                // not bounded, so this never drops the exchange
                 temporaryExchangeBuffer.offer(exchange);
             }
         }
