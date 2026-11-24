@@ -25,10 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import jakarta.mail.FetchProfile;
 import jakarta.mail.Flags;
 import jakarta.mail.Folder;
+import jakarta.mail.FolderClosedException;
 import jakarta.mail.FolderNotFoundException;
 import jakarta.mail.Message;
 import jakarta.mail.MessageRemovedException;
@@ -69,6 +72,11 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
     private static final Logger LOG = LoggerFactory.getLogger(MailConsumer.class);
 
     private final JavaMailSender sender;
+    // the poll connects, opens the folder, closes it and disconnects (folder and store are set or nulled) while holding
+    // folderLock, and an exchange that completes on another thread than the poll (pollEnrich, ConsumerTemplate) marks
+    // its mail while holding it, so a mail is checked and marked against one open of the folder. It is never held while
+    // a mail is routed: the completion of a mail routed by the poll thread takes it too
+    private final Lock folderLock = new ReentrantLock();
     private Folder folder;
     private Store store;
     private boolean skipFailedMessage;
@@ -140,38 +148,44 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
         pendingExchanges = 0;
         int polledMessages = 0;
 
-        ensureIsConnected();
-
-        if (store == null || folder == null) {
-            throw new IllegalStateException(
-                    "MailConsumer did not connect properly to the MailStore: "
-                                            + getEndpoint().getConfiguration().getMailStoreLogInformation());
-        }
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Polling mailbox folder: {}", getEndpoint().getConfiguration().getMailStoreLogInformation());
-        }
-
-        if (getEndpoint().getConfiguration().getFetchSize() == 0) {
-            LOG.warn(
-                    "Fetch size is 0 meaning the configuration is set to poll no new messages at all. Camel will skip this poll.");
-            return 0;
-        }
-
-        // ensure folder is open
+        // connect and open the folder while no exchange of an earlier poll marks its mail
+        folderLock.lock();
         try {
-            if (!folder.isOpen()) {
-                openFolder();
+            ensureIsConnected();
+
+            if (store == null || folder == null) {
+                throw new IllegalStateException(
+                        "MailConsumer did not connect properly to the MailStore: "
+                                                + getEndpoint().getConfiguration().getMailStoreLogInformation());
             }
-        } catch (MessagingException e) {
-            // some kind of connectivity error, so lets re-create connection
-            String msg = "Error opening mail folder due to " + e.getMessage() + ". Will re-create connection on next poll.";
-            LOG.warn(msg);
+
             if (LOG.isDebugEnabled()) {
-                LOG.debug(msg, e);
+                LOG.debug("Polling mailbox folder: {}", getEndpoint().getConfiguration().getMailStoreLogInformation());
             }
-            disconnect();
-            return 0; // return since we cannot poll mail messages, but will re-connect on next poll.
+
+            if (getEndpoint().getConfiguration().getFetchSize() == 0) {
+                LOG.warn(
+                        "Fetch size is 0 meaning the configuration is set to poll no new messages at all. Camel will skip this poll.");
+                return 0;
+            }
+
+            // ensure folder is open
+            try {
+                if (!folder.isOpen()) {
+                    openFolder();
+                }
+            } catch (MessagingException e) {
+                // some kind of connectivity error, so lets re-create connection
+                String msg = "Error opening mail folder due to " + e.getMessage() + ". Will re-create connection on next poll.";
+                LOG.warn(msg);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug(msg, e);
+                }
+                disconnect();
+                return 0; // return since we cannot poll mail messages, but will re-connect on next poll.
+            }
+        } finally {
+            folderLock.unlock();
         }
 
         // okay consumer is connected to the mail server
@@ -193,30 +207,39 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
         } catch (Exception e) {
             handleException(e);
         } finally {
-            // need to ensure we release resources, but only if closeFolder or disconnect = true
-            if (getEndpoint().getConfiguration().isCloseFolder() || getEndpoint().getConfiguration().isDisconnect()) {
-                try {
-                    if (folder != null && folder.isOpen()) {
-                        if (LOG.isDebugEnabled()) {
-                            LOG.debug("Close mailbox folder {} from {}", folder.getName(),
-                                    getEndpoint().getConfiguration().getMailStoreLogInformation());
-                        }
-                        folder.close(true);
-                    }
-                } catch (Exception e) {
-                    // some mail servers will lock the folder so we ignore in this case (CAMEL-1263)
-                    LOG.debug("Could not close mailbox folder: {}. This exception is ignored.", folder.getName(), e);
+            // close and disconnect while no exchange that completes on another thread marks its mail: it marks it
+            // before (the folder is still open) or after (it opens the folder again, or connects again)
+            folderLock.lock();
+            try {
+                // need to ensure we release resources, but only if closeFolder or disconnect = true
+                if (getEndpoint().getConfiguration().isCloseFolder() || getEndpoint().getConfiguration().isDisconnect()) {
+                    closeFolder();
                 }
+                // should we disconnect, the header can override the configuration
+                if (getEndpoint().getConfiguration().isDisconnect()) {
+                    disconnect();
+                }
+            } finally {
+                folderLock.unlock();
             }
         }
 
-        // should we disconnect, the header can override the configuration
-        boolean disconnect = getEndpoint().getConfiguration().isDisconnect();
-        if (disconnect) {
-            disconnect();
-        }
-
         return polledMessages;
+    }
+
+    private void closeFolder() {
+        try {
+            if (folder != null && folder.isOpen()) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Close mailbox folder {} from {}", folder.getName(),
+                            getEndpoint().getConfiguration().getMailStoreLogInformation());
+                }
+                folder.close(true);
+            }
+        } catch (Exception e) {
+            // some mail servers will lock the folder so we ignore in this case (CAMEL-1263)
+            LOG.debug("Could not close mailbox folder: {}. This exception is ignored.", folder.getName(), e);
+        }
     }
 
     private void disconnect() {
@@ -279,10 +302,7 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
             exchange.getExchangeExtension().addOnCompletion(new SynchronizationAdapter() {
                 @Override
                 public void onComplete(Exchange exchange) {
-                    Message current = mailToCommit(mail, uid, uidValidity, batchOpen, exchange);
-                    if (current != null) {
-                        processCommit(current, exchange);
-                    }
+                    commit(mail, uid, uidValidity, batchOpen, exchange);
                 }
 
                 @Override
@@ -337,6 +357,67 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
     private void openFolder() throws MessagingException {
         folder.open(Folder.READ_WRITE);
         folderOpens.incrementAndGet();
+    }
+
+    /**
+     * Marks the mail of an exchange that completed. The mail is checked and marked under the folder lock, so the poll
+     * cannot close the folder, disconnect or connect again in between. With pollEnrich or a ConsumerTemplate the
+     * exchange completes after the poll, which may have disconnected meanwhile (disconnect=true, or the folder could
+     * not be opened): the consumer then connects again to mark the mail, which is found again by its UID (IMAP) or its
+     * key (POP3) as after any other new open of the folder, and disconnects again with disconnect=true.
+     */
+    void commit(Message mail, Long uid, long uidValidity, int batchOpen, Exchange exchange) {
+        folderLock.lock();
+        try {
+            boolean connected = false;
+            if (folder == null) {
+                if (!connectToCommit(mail, exchange)) {
+                    return;
+                }
+                connected = true;
+            }
+            try {
+                Message current = mailToCommit(mail, uid, uidValidity, batchOpen, exchange);
+                if (current != null) {
+                    processCommit(current, exchange);
+                }
+            } finally {
+                if (connected && getEndpoint().getConfiguration().isDisconnect()) {
+                    closeFolder();
+                    disconnect();
+                }
+            }
+        } finally {
+            folderLock.unlock();
+        }
+    }
+
+    /**
+     * Connects again to mark the mail of an exchange that completed after the poll disconnected. Returns false when the
+     * consumer is stopped or cannot connect: the mail is then not marked, and its idempotent key is settled as on
+     * commit.
+     */
+    private boolean connectToCommit(Message mail, Exchange exchange) {
+        String notMarked = getEndpoint().getConfiguration().isDelete() ? "DELETED" : "SEEN";
+        if (!isRunAllowed()) {
+            LOG.warn("The consumer of {} is stopped: the mail of an exchange that completed after it disconnected is not"
+                     + " marked as {}.",
+                    getEndpoint().getConfiguration().getMailStoreLogInformation(), notMarked);
+            commitIdempotentKey((String) exchange.removeProperty(MAIL_MESSAGE_UID));
+            return false;
+        }
+        LOG.debug("Connecting to {} again to mark the mail of an exchange that completed after the poll disconnected",
+                getEndpoint().getConfiguration().getMailStoreLogInformation());
+        try {
+            ensureIsConnected();
+            return true;
+        } catch (Exception e) {
+            getExceptionHandler().handleException("Error occurred during committing mail message: " + mail, exchange, e);
+            commitIdempotentKey((String) exchange.removeProperty(MAIL_MESSAGE_UID));
+            // the store may be connected without the folder: the next poll connects again
+            disconnect();
+            return false;
+        }
     }
 
     /**
@@ -649,17 +730,24 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
      * @param exchange the exchange
      */
     protected void processCommit(Message mail, Exchange exchange) {
+        String uid = (String) exchange.removeProperty(MAIL_MESSAGE_UID);
+        boolean pop3 = getEndpoint().getConfiguration().getProtocol().startsWith("pop3");
         try {
             // ensure folder is open
             if (!folder.isOpen()) {
+                if (!pop3) {
+                    // mailToCommit checked this IMAP mail object against the open folder, and the poll cannot close it
+                    // meanwhile: its connection dropped, or the consumer is stopping. In a new open, the message number
+                    // of the mail object can designate another mail, so it is not marked
+                    throw new FolderClosedException(
+                            folder, "The folder was closed after the mail was checked, so the mail is not marked");
+                }
                 openFolder();
             }
 
-            String uid = (String) exchange.removeProperty(MAIL_MESSAGE_UID);
-
             // If the protocol is POP3, the message needs to be synced with the folder via the UID.
             // Otherwise setting the DELETE/SEEN flag won't delete the message.
-            if (getEndpoint().getConfiguration().getProtocol().startsWith("pop3")) {
+            if (pop3) {
                 int count = folder.getMessageCount();
                 Message found = null;
                 LOG.trace("Looking for POP3Message with UID {} from folder with {} mails", uid, count);
@@ -699,24 +787,20 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
                 mail.setFlag(Flags.Flag.SEEN, true);
                 copyOrMoveMessageIfRequired(config, mail, moveTo, true);
             }
-
-            // need to confirm or remove on commit at last
-            if (getEndpoint().getIdempotentRepository() != null) {
-                if (getEndpoint().isIdempotentRepositoryRemoveOnCommit()) {
-                    getEndpoint().getIdempotentRepository().remove(uid);
-                } else {
-                    getEndpoint().getIdempotentRepository().confirm(uid);
-                }
-            }
-
         } catch (MessageRemovedException e) {
             MessagingException wrapped = new MessagingException(
                     "Message already removed/expunged on server (message state could not be updated)", e);
             getExceptionHandler().handleException(
                     "Error occurred during committing mail message: " + mail, exchange, wrapped);
-        } catch (MessagingException e) {
+        } catch (MessagingException | IllegalStateException e) {
+            // IllegalStateException: the folder or the store was closed by a stop of the consumer (IMAPFolder
+            // checkOpened, IMAPStore not connected)
             getExceptionHandler().handleException("Error occurred during committing mail message: " + mail, exchange, e);
         }
+
+        // need to confirm or remove on commit at last; also when the mail could not be marked, so it is not skipped as
+        // a duplicate for good (as mailToCommit does)
+        commitIdempotentKey(uid);
     }
 
     private Exchange createExchange(Message message) {
