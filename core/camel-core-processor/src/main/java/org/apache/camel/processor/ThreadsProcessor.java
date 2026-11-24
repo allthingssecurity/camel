@@ -51,6 +51,9 @@ import org.slf4j.LoggerFactory;
  * <li>CallerRuns - The current exchange will be processed by the current thread. Which means the current thread will
  * not be free to process a new exchange, as it's processing the current exchange.</li>
  * </ul>
+ * When the thread pool is shut down (such as a shared thread pool shut down by its owner), the exchange cannot be
+ * processed with any policy: it is failed with a {@link RejectedExecutionException} (a {@link RouteStoppingException}
+ * when this processor is stopped).
  */
 public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, RouteIdAware, StepIdAware {
 
@@ -69,6 +72,9 @@ public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, R
         private final Exchange exchange;
         private final AsyncCallback callback;
         private final boolean done;
+        // the exchange is completed once: set by the task when it runs, by a reject, or by process when the thread
+        // pool was shut down while the task was handed to it
+        private final AtomicBoolean claimed = new AtomicBoolean();
 
         ProcessCall(Exchange exchange, AsyncCallback callback, boolean done) {
             this.exchange = exchange;
@@ -76,8 +82,16 @@ public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, R
             this.done = done;
         }
 
+        boolean claim() {
+            return claimed.compareAndSet(false, true);
+        }
+
         @Override
         public void run() {
+            if (!claim()) {
+                // the exchange was already failed as the thread pool was shut down
+                return;
+            }
             LOG.trace("Continue routing exchange {}", exchange);
             if (shutdown.get()) {
                 exchange.setException(new RouteStoppingException("ThreadsProcessor is not running."));
@@ -87,6 +101,10 @@ public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, R
 
         @Override
         public void reject() {
+            if (!claim()) {
+                // the task has already run, or the exchange was already failed
+                return;
+            }
             // reject should mark the exchange with an rejected exception and mark not to route anymore
             exchange.setException(new RejectedExecutionException());
             LOG.trace("Rejected routing exchange {}", exchange);
@@ -94,6 +112,28 @@ public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, R
                 exchange.setException(new RouteStoppingException("ThreadsProcessor is not running."));
             }
             callback.done(done);
+        }
+
+        /**
+         * Fails the exchange in the calling thread when the thread pool is shut down and the task has not run: the
+         * CallerRuns policy (the default) drops the task of a shut down thread pool without an exception, so nothing
+         * else would complete the exchange.
+         *
+         * @return true when this call failed the exchange (and called the callback), false when the task runs (or ran,
+         *         or was rejected) and completes the exchange itself
+         */
+        boolean failIfNotRun() {
+            if (!claim()) {
+                return false;
+            }
+            LOG.trace("Thread pool is shut down, rejected exchange {}", exchange);
+            exchange.setException(new RejectedExecutionException(
+                    "The thread pool of the Threads EIP is shut down: the exchange is not processed"));
+            if (shutdown.get()) {
+                exchange.setException(new RouteStoppingException("ThreadsProcessor is not running."));
+            }
+            callback.done(true);
+            return true;
         }
 
         @Override
@@ -128,16 +168,21 @@ public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, R
             return true;
         }
 
+        // process the call in asynchronous mode
+        ProcessCall call = new ProcessCall(exchange, callback, false);
         try {
-            // process the call in asynchronous mode
-            ProcessCall call = new ProcessCall(exchange, callback, false);
             LOG.trace("Submitting task {}", call);
             executorService.submit(call);
-            // tell Camel routing engine we continue routing asynchronous
-            return false;
         } catch (Exception e) {
             return handleException(exchange, callback, e);
         }
+        if (executorService.isShutdown() && call.failIfNotRun()) {
+            // the thread pool was shut down before or while the task was handed to it (such as a shared thread pool
+            // shut down by its owner, or the route removed meanwhile), so the task may have been dropped
+            return true;
+        }
+        // tell Camel routing engine we continue routing asynchronous
+        return false;
     }
 
     private boolean handleException(Exchange exchange, AsyncCallback callback, Exception e) {
@@ -145,6 +190,10 @@ public class ThreadsProcessor extends BaseProcessorSupport implements IdAware, R
             // process the call in synchronous mode
             ProcessCall call = new ProcessCall(exchange, callback, true);
             rejectedPolicy.asRejectedExecutionHandler().rejectedExecution(call, tpe);
+            if (tpe.isShutdown()) {
+                // the CallerRuns policy drops the call of a shut down thread pool
+                call.failIfNotRun();
+            }
             return true;
         } else {
             exchange.setException(e);
