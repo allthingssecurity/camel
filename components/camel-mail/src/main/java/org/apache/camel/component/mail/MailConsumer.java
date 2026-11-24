@@ -496,13 +496,25 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
             // the key of this mail once it has been added to the idempotent repository
             String addedKey = null;
             try {
+                // need to call setPeek on java-mail to avoid the message being flagged eagerly as SEEN on the server in
+                // case we process the message and rollback due an exception; before the key is generated, so a
+                // mailUidGenerator that reads the mail does not flag it SEEN either
+                if (getEndpoint().getConfiguration().isPeek()) {
+                    peekMessage(message);
+                }
                 String key = getEndpoint().getMailUidGenerator().generateUuid(getEndpoint(), message);
                 if (isValidMessage(key, message)) {
                     addedKey = key;
-                    // need to call setPeek on java-mail to avoid the message being flagged eagerly as SEEN on the server in case
-                    // we process the message and rollback due an exception
-                    if (getEndpoint().getConfiguration().isPeek()) {
-                        peekMessage(message);
+                    if (isSeenSinceSearched(message)) {
+                        // another consumer sharing the idempotent repository consumed the mail after this poll
+                        // searched the unseen mails: it marked the mail SEEN, then removed its key
+                        // (idempotentRepositoryRemoveOnCommit), so the key could be added again. The mail is not routed
+                        // again, and the key is removed again
+                        LOG.debug(
+                                "Skipping message with key: {} as it was flagged as SEEN after the unseen mails were searched",
+                                key);
+                        removeIdempotentKey(key);
+                        continue;
                     }
                     Exchange exchange = createExchange(new KeyValueHolder<>(key, message));
                     if (exchange != null) {
@@ -562,6 +574,32 @@ public class MailConsumer extends ScheduledBatchPollingConsumer {
 
         LOG.debug("Message: {} with key: {} is valid: {}", msg, key, answer);
         return answer;
+    }
+
+    /**
+     * Whether a mail that the unseen search of this poll found is flagged SEEN once its key was added to the idempotent
+     * repository. Consumers sharing the repository can search the same mail; the one that consumes it marks it SEEN,
+     * then removes its key (by default), so another one can add the key afterwards and would route the mail again.
+     * <p/>
+     * Only for IMAP, when the consumer searches the unseen mails (unseen=true and no custom searchTerm), and with
+     * peek=true, so the consumer itself did not flag the mail SEEN by reading it. The flags are read from the server
+     * here (the search and the key, read from the headers with peek, do not fetch them), which is the read the DELETED
+     * check of createExchange does anyway: there is no extra round trip.
+     */
+    private boolean isSeenSinceSearched(Message mail) {
+        MailConfiguration config = getEndpoint().getConfiguration();
+        if (getEndpoint().getIdempotentRepository() == null || getEndpoint().getSearchTerm() != null || !config.isUnseen()
+                || !config.isPeek() || config.getProtocol().startsWith("pop3")) {
+            return false;
+        }
+        try {
+            return mail.getFlags().contains(Flags.Flag.SEEN);
+        } catch (MessagingException e) {
+            // the DELETED check of createExchange reads the flags again, and handles the failure as for any mail
+            // (skipFailedMessage, handleFailedMessage)
+            LOG.trace("Cannot read the flags of the mail with the key just added. This exception is ignored here.", e);
+            return false;
+        }
     }
 
     /**
