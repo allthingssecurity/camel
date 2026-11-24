@@ -20,6 +20,9 @@ import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.hazelcast.collection.BaseQueue;
 import com.hazelcast.transaction.TransactionContext;
@@ -29,6 +32,7 @@ import org.apache.camel.Consumer;
 import org.apache.camel.Endpoint;
 import org.apache.camel.Exchange;
 import org.apache.camel.Processor;
+import org.apache.camel.spi.ShutdownStrategy;
 import org.apache.camel.support.AsyncProcessorConverterHelper;
 import org.apache.camel.support.DefaultConsumer;
 import org.apache.camel.support.DefaultExchange;
@@ -51,8 +55,15 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
     private final HazelcastSedaEndpoint endpoint;
     private final AsyncProcessor processor;
     private ExecutorService executor;
-    private ScheduledExecutorService taskExecutor;
+    // read by the consumer threads, which can still run after doStop when the stop was interrupted
+    private volatile ScheduledExecutorService taskExecutor;
     private volatile boolean transferredExchangeLogged;
+    // the transacted consumer threads that poll or route a polled exchange: the stop waits for them before it shuts the
+    // threads down, as the shutdown interrupts a thread that waits for its exchange, which rolls back the transaction of
+    // an exchange that still completes (so its message is consumed again)
+    private final Lock transactedLock = new ReentrantLock();
+    private final Condition transactedDone = transactedLock.newCondition();
+    private int transactedInProgress;
 
     public HazelcastSedaConsumer(final Endpoint endpoint, final Processor processor) {
         super(endpoint, processor);
@@ -77,6 +88,9 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
     @Override
     protected void doStop() throws Exception {
         if (executor != null) {
+            if (endpoint.getConfiguration().isTransacted()) {
+                awaitTransactedExchanges();
+            }
             // wait for the consumer threads to end their current poll (at most MAX_POLL_WAIT) and route what it returned:
             // a poll takes the item from the queue, so an item polled after the processor is stopped is lost
             endpoint.getCamelContext().getExecutorServiceManager().shutdownGraceful(executor);
@@ -96,6 +110,11 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
 
         while (queue != null && isRunAllowed()) {
             final boolean transacted = endpoint.getConfiguration().isTransacted();
+            if (transacted && !beginTransacted()) {
+                // the consumer is stopping
+                break;
+            }
+            boolean errorDelay = false;
             // the transacted consumer reads the outcome of the exchange after the routing is done, so it releases the
             // exchange itself: a pooled exchange is otherwise reset (and its exception cleared) when it is done
             final Exchange exchange = createExchange(!transacted);
@@ -133,11 +152,9 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
                             } catch (Exception e) {
                                 exchange.setException(e);
                             }
-                            if (onExchangeDone(exchange, txc)) {
-                                // the message is back on the queue: wait before taking it again, or a message that
-                                // always fails is taken and rolled back in a tight loop
-                                waitOnErrorDelay();
-                            }
+                            // when the message is back on the queue, wait before taking it again, or a message that
+                            // always fails is taken and rolled back in a tight loop
+                            errorDelay = onExchangeDone(exchange, txc);
                         } else {
                             // process using the asynchronous routing engine
                             processor.process(exchange, new AsyncCallback() {
@@ -175,13 +192,92 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
                     }
                 }
                 getExceptionHandler().handleException("Error processing exchange", exchange, e);
-                waitOnErrorDelay();
+                errorDelay = true;
             } finally {
                 if (transacted) {
                     releaseExchange(exchange, false);
+                    endTransacted();
                 }
             }
+            if (errorDelay) {
+                // after endTransacted: the stop does not wait for the delay
+                waitOnErrorDelay();
+            }
         }
+    }
+
+    /**
+     * Counts a transacted consumer thread that polls and routes, unless the consumer is stopping (checked under the
+     * lock, so the stop either waits for this thread or this thread does not poll).
+     */
+    private boolean beginTransacted() {
+        transactedLock.lock();
+        try {
+            if (!isRunAllowed()) {
+                return false;
+            }
+            transactedInProgress++;
+            return true;
+        } finally {
+            transactedLock.unlock();
+        }
+    }
+
+    private void endTransacted() {
+        transactedLock.lock();
+        try {
+            transactedInProgress--;
+            if (transactedInProgress == 0) {
+                transactedDone.signalAll();
+            }
+        } finally {
+            transactedLock.unlock();
+        }
+    }
+
+    /**
+     * Waits until no transacted consumer thread polls or routes an exchange, at most the timeout of the shutdown
+     * strategy. The shutdown of the consumer threads that follows interrupts a thread that is still waiting for its
+     * exchange, and the transaction of that exchange is then rolled back.
+     */
+    private void awaitTransactedExchanges() {
+        ShutdownStrategy strategy = endpoint.getCamelContext().getShutdownStrategy();
+        long timeoutMillis = strategy.getTimeUnit().toMillis(strategy.getTimeout());
+        long remaining = TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        transactedLock.lock();
+        try {
+            // a thread that only polls is done within MAX_POLL_WAIT (and its commit): say why the stop waits longer
+            long quiet = Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(2 * MAX_POLL_WAIT));
+            remaining -= quiet - awaitTransactedDone(quiet);
+            if (transactedInProgress > 0 && remaining > 0) {
+                LOG.info("Waiting up to {} ms for {} transacted exchanges of {} to complete before the consumer stops",
+                        TimeUnit.NANOSECONDS.toMillis(remaining), transactedInProgress, endpoint);
+                awaitTransactedDone(remaining);
+            }
+            if (transactedInProgress > 0) {
+                LOG.warn("Timeout waiting for {} transacted exchanges of {} to complete: the consumer stops now, and"
+                         + " their transactions are rolled back, so their messages are consumed again",
+                        transactedInProgress, endpoint);
+            }
+        } catch (InterruptedException e) {
+            // the shutdown timed out (it cancels its task): stop now, which rolls back the remaining exchanges
+            LOG.debug("Interrupted while waiting for the transacted exchanges of {} to complete", endpoint);
+            Thread.currentThread().interrupt();
+        } finally {
+            transactedLock.unlock();
+        }
+    }
+
+    /**
+     * Waits (holding transactedLock) until no transacted consumer thread polls or routes, at most the given time.
+     *
+     * @return the time left
+     */
+    private long awaitTransactedDone(long nanos) throws InterruptedException {
+        while (transactedInProgress > 0 && nanos > 0) {
+            nanos = transactedDone.awaitNanos(nanos);
+        }
+        return Math.max(0, nanos);
     }
 
     /**
@@ -209,6 +305,12 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
      * Waits onErrorDelay before the consumer polls again, after an error or a rolled back transaction.
      */
     private void waitOnErrorDelay() {
+        final ScheduledExecutorService scheduler = taskExecutor;
+        if (scheduler == null || !isRunAllowed()) {
+            // the consumer is stopping, so the loop ends instead of polling again (and the scheduler may be shut down
+            // already, when the stop did not wait for this thread)
+            return;
+        }
         // Use Camel's task API for error recovery delay instead of Thread.sleep()
         // We use initialDelay for the actual delay, and maxIterations(1) to run once
         Tasks.backgroundTask()
@@ -218,7 +320,7 @@ public class HazelcastSedaConsumer extends DefaultConsumer implements Runnable {
                         .withInterval(Duration.ofMillis(1))
                         .withUnlimitedDuration()
                         .build())
-                .withScheduledExecutor(taskExecutor)
+                .withScheduledExecutor(scheduler)
                 .withName("HazelcastSedaErrorRecoveryDelay")
                 .build()
                 .run(getEndpoint().getCamelContext(), () -> true);
