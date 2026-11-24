@@ -17,11 +17,14 @@
 package org.apache.camel.processor.aggregate.hazelcast;
 
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.TimeUnit;
 
 import com.hazelcast.config.Config;
 import com.hazelcast.config.XmlConfigBuilder;
+import com.hazelcast.core.EntryView;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
 import com.hazelcast.map.IMap;
@@ -92,6 +95,13 @@ public class HazelcastAggregationRepository extends ServiceSupport
     @Metadata(label = "advanced", security = "insecure:serialization",
               description = "Whether headers on the Exchange that are Java objects and Serializable should be included and saved to the repository")
     protected boolean allowSerializedHeaders;
+
+    // optimistic locking: the groups that get() returned, each with the key, and the version and exchange id of the
+    // stored entry as it was read
+    private final Map<Exchange, ReadGroup> readGroups = Collections.synchronizedMap(new WeakHashMap<>());
+
+    private record ReadGroup(String key, long version, String exchangeId) {
+    }
 
     public HazelcastAggregationRepository() {
     }
@@ -216,13 +226,24 @@ public class HazelcastAggregationRepository extends ServiceSupport
                 throw new OptimisticLockingException();
             }
         } else {
-            DefaultExchangeHolder oldHolder = DefaultExchangeHolder.marshal(oldExchange, true, allowSerializedHeaders);
             DefaultExchangeHolder newHolder = DefaultExchangeHolder.marshal(newExchange, true, allowSerializedHeaders);
-            if (!cache.replace(key, oldHolder, newHolder)) {
-                LOG.error(
-                        "Optimistic locking failed for exchange with key {}: IMap#replace returned no Exchanges, while it's expected to replace one",
-                        key);
-                throw new OptimisticLockingException();
+            ReadGroup read = readGroup(key, oldExchange);
+            if (read != null) {
+                cache.lock(key);
+                try {
+                    checkUnchanged(camelContext, key, read);
+                    cache.set(key, newHolder);
+                } finally {
+                    cache.unlock(key);
+                }
+            } else {
+                DefaultExchangeHolder oldHolder = DefaultExchangeHolder.marshal(oldExchange, true, allowSerializedHeaders);
+                if (!cache.replace(key, oldHolder, newHolder)) {
+                    LOG.error(
+                            "Optimistic locking failed for exchange with key {}: IMap#replace returned no Exchanges, while it's expected to replace one",
+                            key);
+                    throw new OptimisticLockingException();
+                }
             }
         }
         LOG.trace("Added an Exchange with ID {} for key {} in optimistic manner.", newExchange.getExchangeId(), key);
@@ -313,9 +334,74 @@ public class HazelcastAggregationRepository extends ServiceSupport
         return maximumRedeliveries;
     }
 
+    /**
+     * Gets the group of the correlation key.
+     * <p>
+     * With optimistic locking, this method keeps the version of the stored entry for the exchange it returns.
+     * {@link #add(CamelContext, String, Exchange, Exchange)} and {@link #remove(CamelContext, String, Exchange)}, when
+     * given that exchange for the same key, lock the key ({@link IMap#lock(Object)}), check that the stored entry has
+     * the same version and exchange id as when it was read, and write while they hold the lock; else they fail with an
+     * {@link OptimisticLockingException}. They do not compare the group with the exchange they are given, as the
+     * Aggregate EIP sets properties on the group before it removes it, and an aggregation strategy may change the group
+     * (or an object that it holds, such as a list) before it is stored again. The serialized form of the group is not
+     * compared either, as it can change when a value is serialized again (such as a {@code HashSet}) or serialized by
+     * another member. The lock is held only for that check and the write, not while the group is aggregated, and the
+     * members of the cluster need no Camel classes for it. For an exchange that this method did not return for the key,
+     * the stored group is compared with the exchange as it is now, in serialized form.
+     * <p>
+     * In any mode, a group is stored in serialized form: the list of {@code GroupedBodyAggregationStrategy} is an
+     * exchange property, stored only with {@code allowSerializedHeaders=true}, and the lists of
+     * {@code GroupedExchangeAggregationStrategy} and {@code GroupedMessageAggregationStrategy} hold exchanges and
+     * messages, which cannot be serialized, so these two strategies cannot be used with this repository.
+     */
     @Override
     public Exchange get(CamelContext camelContext, String key) {
-        return unmarshallExchange(camelContext, cache.get(key));
+        if (!optimistic) {
+            return unmarshallExchange(camelContext, cache.get(key));
+        }
+        EntryView<String, DefaultExchangeHolder> entry = entryView(key);
+        if (entry == null) {
+            return null;
+        }
+        Exchange exchange = unmarshallExchange(camelContext, entry.getValue());
+        // the exchange id is kept as read, before the caller can change the exchange
+        readGroups.put(exchange, new ReadGroup(key, entry.getVersion(), exchange.getExchangeId()));
+        return exchange;
+    }
+
+    /**
+     * The entry of the key, with its value and version read together. An entry that is only in a map store is loaded
+     * first, as {@link IMap#getEntryView(Object)} does not load it.
+     */
+    private EntryView<String, DefaultExchangeHolder> entryView(String key) {
+        EntryView<String, DefaultExchangeHolder> entry = cache.getEntryView(key);
+        if (entry == null && cache.containsKey(key)) {
+            entry = cache.getEntryView(key);
+        }
+        return entry;
+    }
+
+    /**
+     * The group as {@link #get} read it, when it returned the exchange for this key, else {@code null}.
+     */
+    private ReadGroup readGroup(String key, Exchange exchange) {
+        ReadGroup read = readGroups.remove(exchange);
+        return read != null && read.key().equals(key) ? read : null;
+    }
+
+    /**
+     * Checks, while the key is locked, that the stored group is still the one that was read: Hazelcast increments the
+     * version of an entry on every write, and starts it again at 0 for an entry that is created after a remove, so a
+     * new group of the key is told apart by its exchange id.
+     */
+    private void checkUnchanged(CamelContext camelContext, String key, ReadGroup read) {
+        EntryView<String, DefaultExchangeHolder> entry = entryView(key);
+        if (entry == null || entry.getVersion() != read.version()
+                || !read.exchangeId().equals(unmarshallExchange(camelContext, entry.getValue()).getExchangeId())) {
+            LOG.error("Optimistic locking failed for exchange with key {}: the group was changed or removed since it was read",
+                    key);
+            throw new OptimisticLockingException();
+        }
     }
 
     /**
@@ -350,11 +436,13 @@ public class HazelcastAggregationRepository extends ServiceSupport
     /**
      * Removes the {@code exchange} from the operational storage and moves it into the persistent one if the
      * {@link HazelcastAggregationRepository} runs in recoverable mode. Both operations are applied atomically inside a
-     * Hazelcast transaction (ONE_PHASE): when {@code optimistic} is {@code true} and {@code useRecovery} is
-     * {@code true}, a {@link com.hazelcast.transaction.TransactionalMap#remove(Object, Object)} is used as the
-     * conditional compare-and-delete, so the losing thread's transaction sees the entry already gone, rolls back, and
-     * never touches the persistent map. When {@code optimistic} is {@code false} and {@code useRecovery} is
-     * {@code true}, the same transactional pattern is used without the conditional check.
+     * Hazelcast transaction (ONE_PHASE). When {@code optimistic} is {@code true}, the group is removed only if it is
+     * still the group that was read: for an exchange that {@link #get} returned for the key, the key is locked and the
+     * version of the entry is checked (see {@link #get}); for any other exchange,
+     * {@link com.hazelcast.transaction.TransactionalMap#remove(Object, Object)} is used as the conditional
+     * compare-and-delete. Either way the losing thread fails before it touches the persistent map. When
+     * {@code optimistic} is {@code false} and {@code useRecovery} is {@code true}, the same transactional pattern is
+     * used without the conditional check.
      *
      * @param camelContext the current CamelContext
      * @param key          the correlation key
@@ -364,64 +452,17 @@ public class HazelcastAggregationRepository extends ServiceSupport
     public void remove(CamelContext camelContext, String key, Exchange exchange) {
         DefaultExchangeHolder holder = DefaultExchangeHolder.marshal(exchange, true, allowSerializedHeaders);
         if (optimistic) {
-            LOG.trace("Removing an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(), key);
-            if (useRecovery) {
-                // Use a Hazelcast transaction to atomically apply the conditional remove and the recovery write.
-                // A plain two-step approach (in either order) has two failure modes:
-                //   1. put-then-remove (the pre-fix order): the two steps cannot be fenced: a concurrent thread
-                //      holds the same exchangeId (it read the same stored entry), so it would delete the winning
-                //      thread's recovery entry during its own cleanup on the compare-and-remove failure (CAMEL-26796).
-                //   2. remove-then-put: if the JVM stops or persistedCache.put() throws after a successful
-                //      cache.remove(), the group is in neither map (CAMEL-26663).
-                // TransactionalMap.remove(key, value) is a compare-and-delete that enrolls the entry in the
-                // transaction: the entry is gone or holds a different value from the loser's perspective, so
-                // its remove returns false, and it never reaches the recovery write.
-                TransactionOptions tOpts = new TransactionOptions();
-                tOpts.setTransactionType(TransactionOptions.TransactionType.ONE_PHASE);
-                TransactionContext tCtx = hazelcastInstance.newTransactionContext(tOpts);
+            ReadGroup read = readGroup(key, exchange);
+            if (read != null) {
+                cache.lock(key);
                 try {
-                    tCtx.beginTransaction();
-
-                    TransactionalMap<String, DefaultExchangeHolder> tCache = tCtx.getMap(cache.getName());
-                    TransactionalMap<String, DefaultExchangeHolder> tPersistentCache = tCtx.getMap(persistedCache.getName());
-
-                    if (!tCache.remove(key, holder)) {
-                        tCtx.rollbackTransaction();
-                        LOG.error(
-                                "Optimistic locking failed for exchange with key {}: TransactionalMap#remove returned false (compare-and-delete found no matching entry).",
-                                key);
-                        throw new OptimisticLockingException();
-                    }
-                    LOG.trace("Putting an exchange with ID {} for key {} into a recoverable storage in an optimistic manner.",
-                            exchange.getExchangeId(), key);
-                    // store the given exchange and not the removed entry: when a group is completed by an incoming
-                    // exchange, the last aggregated exchange is not added to the repository before it is removed
-                    tPersistentCache.put(exchange.getExchangeId(), holder);
-
-                    tCtx.commitTransaction();
-                    LOG.trace("Removed an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(),
-                            key);
-                    LOG.trace("Put an exchange with ID {} for key {} into a recoverable storage in an optimistic manner.",
-                            exchange.getExchangeId(), key);
-                } catch (OptimisticLockingException e) {
-                    throw e;
-                } catch (Exception exception) {
-                    tCtx.rollbackTransaction();
-
-                    final String msg = String.format(
-                            "Transaction with ID %s was rolled back for optimistic remove operation with a key %s and an Exchange ID %s.",
-                            tCtx.getTxnId(), key, exchange.getExchangeId());
-                    LOG.warn(msg, exception);
-                    throw new RuntimeCamelException(msg, exception);
+                    checkUnchanged(camelContext, key, read);
+                    removeOptimistic(key, exchange, holder, null);
+                } finally {
+                    cache.unlock(key);
                 }
             } else {
-                if (!cache.remove(key, holder)) {
-                    LOG.error(
-                            "Optimistic locking failed for exchange with key {}: IMap#remove returned false (compare-and-delete found no matching entry).",
-                            key);
-                    throw new OptimisticLockingException();
-                }
-                LOG.trace("Removed an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(), key);
+                removeOptimistic(key, exchange, holder, holder);
             }
         } else {
             if (useRecovery) {
@@ -464,6 +505,80 @@ public class HazelcastAggregationRepository extends ServiceSupport
             } else {
                 cache.remove(key);
             }
+        }
+    }
+
+    /**
+     * Removes the group in optimistic mode: with {@code expected == null}, the caller holds the lock of the key and
+     * checked the group, so the entry is removed as it is; else only if it is equal to {@code expected} in serialized
+     * form.
+     */
+    private void removeOptimistic(
+            String key, Exchange exchange, DefaultExchangeHolder holder, DefaultExchangeHolder expected) {
+        LOG.trace("Removing an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(), key);
+        if (useRecovery) {
+            // Use a Hazelcast transaction to atomically apply the conditional remove and the recovery write.
+            // A plain two-step approach (in either order) has two failure modes:
+            //   1. put-then-remove (the pre-fix order): the two steps cannot be fenced: a concurrent thread
+            //      holds the same exchangeId (it read the same stored entry), so it would delete the winning
+            //      thread's recovery entry during its own cleanup on the compare-and-remove failure (CAMEL-26796).
+            //   2. remove-then-put: if the JVM stops or persistedCache.put() throws after a successful
+            //      cache.remove(), the group is in neither map (CAMEL-26663).
+            // TransactionalMap.remove(key, value) is a compare-and-delete that enrolls the entry in the
+            // transaction: the entry is gone or holds a different value from the loser's perspective, so
+            // its remove returns false, and it never reaches the recovery write. With the key locked and the
+            // group checked, the loser fails the check before it starts the transaction.
+            TransactionOptions tOpts = new TransactionOptions();
+            tOpts.setTransactionType(TransactionOptions.TransactionType.ONE_PHASE);
+            TransactionContext tCtx = hazelcastInstance.newTransactionContext(tOpts);
+            try {
+                tCtx.beginTransaction();
+
+                TransactionalMap<String, DefaultExchangeHolder> tCache = tCtx.getMap(cache.getName());
+                TransactionalMap<String, DefaultExchangeHolder> tPersistentCache = tCtx.getMap(persistedCache.getName());
+
+                if (expected == null) {
+                    tCache.delete(key);
+                } else if (!tCache.remove(key, expected)) {
+                    tCtx.rollbackTransaction();
+                    LOG.error(
+                            "Optimistic locking failed for exchange with key {}: TransactionalMap#remove returned false (compare-and-delete found no matching entry).",
+                            key);
+                    throw new OptimisticLockingException();
+                }
+                LOG.trace("Putting an exchange with ID {} for key {} into a recoverable storage in an optimistic manner.",
+                        exchange.getExchangeId(), key);
+                // store the given exchange and not the removed entry: when a group is completed by an incoming
+                // exchange, the last aggregated exchange is not added to the repository before it is removed
+                tPersistentCache.put(exchange.getExchangeId(), holder);
+
+                tCtx.commitTransaction();
+                LOG.trace("Removed an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(),
+                        key);
+                LOG.trace("Put an exchange with ID {} for key {} into a recoverable storage in an optimistic manner.",
+                        exchange.getExchangeId(), key);
+            } catch (OptimisticLockingException e) {
+                throw e;
+            } catch (Exception exception) {
+                tCtx.rollbackTransaction();
+
+                final String msg = String.format(
+                        "Transaction with ID %s was rolled back for optimistic remove operation with a key %s and an Exchange ID %s.",
+                        tCtx.getTxnId(), key, exchange.getExchangeId());
+                LOG.warn(msg, exception);
+                throw new RuntimeCamelException(msg, exception);
+            }
+        } else if (expected == null) {
+            cache.delete(key);
+            LOG.trace("Removed an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(), key);
+        } else {
+            if (!cache.remove(key, expected)) {
+                LOG.error(
+                        "Optimistic locking failed for exchange with key {}: IMap#remove returned false (compare-and-delete found no matching entry).",
+                        key);
+                throw new OptimisticLockingException();
+            }
+            LOG.trace("Removed an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(), key);
         }
     }
 
@@ -526,6 +641,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
 
     @Override
     protected void doStop() throws Exception {
+        readGroups.clear();
         if (useLocalHzInstance) {
             hazelcastInstance.getLifecycleService().shutdown();
             hazelcastInstance = null;
