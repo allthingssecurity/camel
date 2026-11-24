@@ -16,9 +16,11 @@
  */
 package org.apache.camel.util.concurrent;
 
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Represent the kinds of options for rejection handlers for thread pools.
@@ -32,7 +34,14 @@ public enum ThreadPoolRejectedPolicy {
 
     Abort,
     CallerRuns,
+    /**
+     * The caller waits until there is space in the queue of the thread pool. When the thread pool is shut down while
+     * the caller waits, or before the task is taken from the queue, the task is rejected.
+     */
     Block;
+
+    // how often a caller waiting for space in the queue looks whether the thread pool was shut down
+    private static final long BLOCK_SHUTDOWN_CHECK_MILLIS = 100;
 
     public RejectedExecutionHandler asRejectedExecutionHandler() {
         if (this == Abort) {
@@ -62,14 +71,35 @@ public enum ThreadPoolRejectedPolicy {
             return new RejectedExecutionHandler() {
                 @Override
                 public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
-                    if (!executor.isShutdown()) {
-                        try {
-                            executor.getQueue().put(r);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new RejectedExecutionException("Interrupted while waiting for queue space", e);
+                    if (executor.isShutdown()) {
+                        rejectShutdown(r, executor);
+                        return;
+                    }
+                    BlockingQueue<Runnable> queue = executor.getQueue();
+                    try {
+                        // a shutdown does not always wake up a caller that waits for space (a SynchronousQueue has no
+                        // taker any more), so the caller looks whether the thread pool was shut down meanwhile
+                        while (!queue.offer(r, BLOCK_SHUTDOWN_CHECK_MILLIS, TimeUnit.MILLISECONDS)) {
+                            if (executor.isShutdown()) {
+                                rejectShutdown(r, executor);
+                                return;
+                            }
                         }
-                    } else if (r instanceof Rejectable rejectable) {
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RejectedExecutionException("Interrupted while waiting for queue space", e);
+                    }
+                    // as ThreadPoolExecutor.execute does after it queued a task: when the thread pool was shut down
+                    // meanwhile, the task may never run (shutdownNow drained the queue before the task was added, or
+                    // the last thread of the pool has exited), so it is taken out of the queue again and rejected.
+                    // When it cannot be taken out, a thread of the pool or shutdownNow has it
+                    if (executor.isShutdown() && executor.remove(r)) {
+                        rejectShutdown(r, executor);
+                    }
+                }
+
+                private void rejectShutdown(Runnable r, ThreadPoolExecutor executor) {
+                    if (r instanceof Rejectable rejectable) {
                         // the task cannot run as the pool is shutdown
                         rejectable.reject();
                     } else {
