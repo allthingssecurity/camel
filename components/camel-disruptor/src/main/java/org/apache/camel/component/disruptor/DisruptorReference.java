@@ -181,26 +181,10 @@ public class DisruptorReference {
         }
 
         //make sure all event handlers are correctly started before we continue
-        for (final LifecycleAwareExchangeEventHandler handler : handlers) {
-            boolean eventHandlerStarted = false;
-            while (!eventHandlerStarted) {
-                try {
-                    //The disruptor start command executed above should have triggered a start signal to all
-                    //event processors which, in their death, should notify our event handlers. They respond by
-                    //switching a latch and we want to await that latch here to make sure they are started.
-                    if (!handler.awaitStarted(10, TimeUnit.SECONDS)) {
-                        //we wait for a relatively long, but limited amount of time to prevent an application using
-                        //this component from hanging indefinitely
-                        //Please report a bug if you can reproduce this
-                        LOGGER.error("Disruptor/event handler failed to start properly, PLEASE REPORT");
-                    }
-                    eventHandlerStarted = true;
-                } catch (InterruptedException e) {
-                    LOGGER.info("Interrupted while waiting for the startup to complete");
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
+        //The disruptor start command executed above should have triggered a start signal to all
+        //event processors which, in their death, should notify our event handlers. They respond by
+        //switching a latch and we want to await that latch here to make sure they are started.
+        awaitEventHandlers(handlers, true);
 
         publishBufferedExchanges(newDisruptor);
 
@@ -345,32 +329,41 @@ public class DisruptorReference {
 
                 //they have already been given a trigger to halt when they are done by shutting down the disruptor
                 //we do however want to await their completion before they are scheduled to process events from the new
-                for (final LifecycleAwareExchangeEventHandler eventHandler : handlers) {
-                    boolean eventHandlerFinished = false;
-                    //the disruptor is now empty and all consumers are either done or busy processing their last exchange
-                    while (!eventHandlerFinished) {
-                        try {
-                            //The disruptor shutdown command executed above should have triggered a halt signal to all
-                            //event processors which, in their death, should notify our event handlers. They respond by
-                            //switching a latch and we want to await that latch here to make sure they are done.
-                            if (!eventHandler.awaitStopped(10, TimeUnit.SECONDS)) {
-                                //we wait for a relatively long, but limited amount of time to prevent an application using
-                                //this component from hanging indefinitely
-                                //Please report a bug if you can repruduce this
-                                LOGGER.error("Disruptor/event handler failed to shut down properly, PLEASE REPORT");
-                            }
-                            eventHandlerFinished = true;
-                        } catch (InterruptedException e) {
-                            LOGGER.info("Interrupted while waiting for the shutdown to complete");
-                            Thread.currentThread().interrupt();
-                        }
-                    }
-                }
+                //(the event processors, in their death, notify our event handlers, which switch a latch we await here)
+                awaitEventHandlers(handlers, false);
 
                 handlers = new LifecycleAwareExchangeEventHandler[0];
             }
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * Waits until each of the event handlers has started (or stopped), for a limited time each. When the thread is
+     * interrupted, it stops waiting and keeps the interrupt flag: waiting again would throw at once for as long as the
+     * flag is set.
+     */
+    static void awaitEventHandlers(final LifecycleAwareExchangeEventHandler[] eventHandlers, final boolean start) {
+        for (final LifecycleAwareExchangeEventHandler eventHandler : eventHandlers) {
+            try {
+                boolean done = start
+                        ? eventHandler.awaitStarted(10, TimeUnit.SECONDS)
+                        : eventHandler.awaitStopped(10, TimeUnit.SECONDS);
+                if (!done) {
+                    //we wait for a relatively long, but limited amount of time to prevent an application using
+                    //this component from hanging indefinitely
+                    //Please report a bug if you can reproduce this
+                    LOGGER.error("Disruptor/event handler failed to {} properly, PLEASE REPORT", start ? "start" : "shut down");
+                }
+            } catch (InterruptedException e) {
+                // as after the time limit above, go on without these event handlers
+                LOGGER.warn("Interrupted while waiting for the {} of the event handlers of a disruptor to complete, not"
+                            + " waiting for them any longer",
+                        start ? "startup" : "shutdown");
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
