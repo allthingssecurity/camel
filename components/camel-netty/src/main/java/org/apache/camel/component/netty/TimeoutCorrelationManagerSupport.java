@@ -19,6 +19,8 @@ package org.apache.camel.component.netty;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
@@ -50,8 +52,10 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
     private volatile boolean stopScheduledExecutorService;
     private volatile ExecutorService workerPool;
     private volatile boolean stopWorkerPool;
-    private volatile TimeoutMap<String, NettyCamelState> map;
+    private volatile CorrelationTimeoutMap map;
     private volatile CamelLogger timeoutLogger;
+    // the producers that use this manager (guarded by the lock of the service)
+    private int users;
 
     private CamelContext camelContext;
     private long timeout = 30000;
@@ -137,6 +141,11 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
 
     @Override
     public void putState(Channel channel, NettyCamelState state) {
+        CorrelationTimeoutMap current = map;
+        if (!isRunning(current)) {
+            // the timeout of a request in the map of a stopped manager never fires: fail the request instead
+            throw new IllegalStateException("The correlation manager is not started");
+        }
         // grab the correlation id
         Object body = state.getExchange().getMessage().getBody();
         // the correlation id is the first part of the message
@@ -145,7 +154,33 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
             throw new IllegalArgumentException("CorrelationID is missing");
         }
         LOG.debug("putState({}) on channel: {}", cid, channel.id());
-        map.put(cid, state, timeout);
+        current.put(cid, state, timeout);
+        if (!isRunning(current)) {
+            // the manager stopped while the state was put (and may have started again with a new map): its stop drained
+            // the map before or after the put. Take the state back, and fail the request unless the drain already
+            // completed it (markDone makes sure that only one of the two completes the exchange). Only this state: when
+            // a reply or the purge task already took it, another request may have put its state with the same id
+            current.remove(cid, state);
+            if (state.markDone()) {
+                throw new IllegalStateException("The correlation manager is not started");
+            }
+        }
+    }
+
+    /**
+     * Whether a state put in the given map is completed by its reply, its timeout or the drain of the stop: the map
+     * runs from the start of the manager until its stop drains it, and the manager creates a new map when it starts
+     * again.
+     */
+    private boolean isRunning(TimeoutMap<String, NettyCamelState> current) {
+        return current != null && isRunAllowed() && ServiceHelper.isStarted(current);
+    }
+
+    /**
+     * The timeout map of the pending requests (for tests).
+     */
+    TimeoutMap<String, NettyCamelState> getTimeoutMap() {
+        return map;
     }
 
     @Override
@@ -169,6 +204,38 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
     public NettyCamelState getState(ChannelHandlerContext ctx, Channel channel, Throwable cause) {
         // noop
         return null;
+    }
+
+    /**
+     * Takes a reference on this manager for a producer that uses it, and starts the manager when it is not started. A
+     * manager configured as a bean can be used by several producers, which must not stop it under each other.
+     */
+    void retain() {
+        lock.lock();
+        try {
+            ServiceHelper.startService(this);
+            users++;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Releases the reference a producer took with {@link #retain()}. The last producer that releases the manager stops
+     * it, which completes the requests that still wait for their reply.
+     */
+    void release() {
+        lock.lock();
+        try {
+            if (users > 0) {
+                users--;
+                if (users == 0) {
+                    ServiceHelper.stopService(this);
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
@@ -227,14 +294,38 @@ public abstract class TimeoutCorrelationManagerSupport extends ServiceSupport
      */
     private static final class CorrelationTimeoutMap extends DefaultTimeoutMap<String, NettyCamelState> {
 
+        // the lock of the map, also held to remove a state only when it is still the state of its correlation id
+        private final Lock mapLock;
+
         CorrelationTimeoutMap(ScheduledExecutorService executor, long requestMapPollTimeMillis) {
-            super(executor, requestMapPollTimeMillis);
+            this(executor, requestMapPollTimeMillis, new ReentrantLock());
+        }
+
+        private CorrelationTimeoutMap(ScheduledExecutorService executor, long requestMapPollTimeMillis, Lock mapLock) {
+            super(executor, requestMapPollTimeMillis, mapLock);
+            this.mapLock = mapLock;
         }
 
         @Override
         protected void doStop() throws Exception {
             drainAndEvictAll();
             super.doStop();
+        }
+
+        /**
+         * Removes the state of the correlation id only when it is the given state. Used by putState once the manager
+         * stopped: the stop evicts all the entries of the map, so it does not matter that get refreshes the expiry time
+         * of the entry.
+         */
+        void remove(String key, NettyCamelState value) {
+            mapLock.lock();
+            try {
+                if (get(key) == value) {
+                    remove(key);
+                }
+            } finally {
+                mapLock.unlock();
+            }
         }
     }
 
