@@ -95,6 +95,11 @@ The component acks or nacks the message it received, also when the route changed
 With manual acknowledgement and the synchronous consumer, the Acknowledgement IDs are taken from the exchange given to
 `ack` or `nack` (see <<Manual Acknowledgement>>).
 
+When pulling fails with an error that ends the pull, such as a non-retryable error of Google PubSub (a permission that
+is missing, a subscription that does not exist) or credentials that cannot be loaded for the asynchronous subscriber,
+the consumer logs the error and subscribes or pulls again after 5 seconds, until the route is stopped. Meanwhile the
+health check of the consumer reports `DOWN` with the error (readiness only).
+
 === Delivery Attempts and Dead Letter Queues
 
 When a subscription has a https://cloud.google.com/pubsub/docs/dead-letter-topics[dead-letter policy] configured,
