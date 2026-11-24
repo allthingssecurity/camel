@@ -16,8 +16,15 @@
  */
 package org.apache.camel.processor.aggregate.hazelcast;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectOutputStream;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.TimeUnit;
 
 import com.hazelcast.config.Config;
@@ -92,6 +99,13 @@ public class HazelcastAggregationRepository extends ServiceSupport
     @Metadata(label = "advanced", security = "insecure:serialization",
               description = "Whether headers on the Exchange that are Java objects and Serializable should be included and saved to the repository")
     protected boolean allowSerializedHeaders;
+
+    // optimistic locking: the groups that get() returned, each with the key, the holder of the group as it was read, and
+    // that holder in serialized form (the holder shares objects with the exchange, such as a list, so it may change)
+    private final Map<Exchange, ReadGroup> readGroups = Collections.synchronizedMap(new WeakHashMap<>());
+
+    private record ReadGroup(String key, DefaultExchangeHolder holder, byte[] group) {
+    }
 
     public HazelcastAggregationRepository() {
     }
@@ -216,7 +230,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
                 throw new OptimisticLockingException();
             }
         } else {
-            DefaultExchangeHolder oldHolder = DefaultExchangeHolder.marshal(oldExchange, true, allowSerializedHeaders);
+            DefaultExchangeHolder oldHolder = expectedHolder(camelContext, key, oldExchange);
             DefaultExchangeHolder newHolder = DefaultExchangeHolder.marshal(newExchange, true, allowSerializedHeaders);
             if (!cache.replace(key, oldHolder, newHolder)) {
                 LOG.error(
@@ -313,9 +327,79 @@ public class HazelcastAggregationRepository extends ServiceSupport
         return maximumRedeliveries;
     }
 
+    /**
+     * Gets the group of the correlation key.
+     * <p>
+     * With optimistic locking, {@link #add(CamelContext, String, Exchange, Exchange)} and
+     * {@link #remove(CamelContext, String, Exchange)} compare the stored group with the group as this method read it,
+     * not with the exchange they are given: the Aggregate EIP sets properties on the group before it removes it, and an
+     * aggregation strategy may change the group before it is stored again, also an object that the group holds (such as
+     * the list of {@code GroupedBodyAggregationStrategy}). The group as read is kept in serialized form, so changes to
+     * the returned exchange do not change it. When an object of the group was changed in place, {@code add} and
+     * {@code remove} read the stored group again and replace or remove it only if it is still the group as it was read.
+     * <p>
+     * In any mode, a group is stored in serialized form: the list of {@code GroupedBodyAggregationStrategy} is an
+     * exchange property, stored only with {@code allowSerializedHeaders=true}, and the lists of
+     * {@code GroupedExchangeAggregationStrategy} and {@code GroupedMessageAggregationStrategy} hold exchanges and
+     * messages, which cannot be serialized, so these two strategies cannot be used with this repository.
+     */
     @Override
     public Exchange get(CamelContext camelContext, String key) {
-        return unmarshallExchange(camelContext, cache.get(key));
+        Exchange exchange = unmarshallExchange(camelContext, cache.get(key));
+        if (optimistic && exchange != null) {
+            // keep the group as it was read, before the caller changes the exchange, to compare the stored group with
+            readGroup(key, exchange).ifPresent(read -> readGroups.put(exchange, read));
+        }
+        return exchange;
+    }
+
+    /**
+     * The group as read: the holder of the exchange, marshalled as
+     * {@link #add(CamelContext, String, Exchange, Exchange)} stores a group (so that its serialized form is the stored
+     * one), and that serialized form.
+     */
+    private Optional<ReadGroup> readGroup(String key, Exchange exchange) {
+        DefaultExchangeHolder holder = DefaultExchangeHolder.marshal(exchange, true, allowSerializedHeaders);
+        byte[] group = serialize(holder);
+        return group != null ? Optional.of(new ReadGroup(key, holder, group)) : Optional.empty();
+    }
+
+    /**
+     * The holder to compare the stored group with, for an optimistic update or remove of the group that the exchange
+     * stands for. When {@link #get} returned the exchange for this key: the holder of the group as it was read, or, if
+     * an object of the group was changed in place since, the stored group read again if it is still the group as it was
+     * read (else the update fails). Otherwise: the exchange as it is now.
+     */
+    private DefaultExchangeHolder expectedHolder(CamelContext camelContext, String key, Exchange exchange) {
+        ReadGroup read = readGroups.remove(exchange);
+        if (read == null || !read.key().equals(key)) {
+            return DefaultExchangeHolder.marshal(exchange, true, allowSerializedHeaders);
+        }
+        if (Arrays.equals(read.group(), serialize(read.holder()))) {
+            return read.holder();
+        }
+        // an object of the group was changed in place (such as a list that a strategy adds to)
+        Exchange stored = unmarshallExchange(camelContext, cache.get(key));
+        Optional<ReadGroup> again = stored != null ? readGroup(key, stored) : Optional.empty();
+        if (again.isEmpty() || !Arrays.equals(read.group(), again.get().group())) {
+            LOG.debug("Optimistic locking failed for exchange with key {}: the group was changed or removed since it was read",
+                    key);
+            throw new OptimisticLockingException();
+        }
+        // the replace or remove still fails if the stored group changes after this read
+        return again.get().holder();
+    }
+
+    private static byte[] serialize(DefaultExchangeHolder holder) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ObjectOutputStream out = new ObjectOutputStream(bytes)) {
+            out.writeObject(holder);
+        } catch (IOException e) {
+            // not expected, as the map stores the holder in this form; the exchange as it is now is compared then
+            LOG.debug("Cannot serialize the group to keep it as it was read", e);
+            return null;
+        }
+        return bytes.toByteArray();
     }
 
     /**
@@ -364,6 +448,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
     public void remove(CamelContext camelContext, String key, Exchange exchange) {
         DefaultExchangeHolder holder = DefaultExchangeHolder.marshal(exchange, true, allowSerializedHeaders);
         if (optimistic) {
+            DefaultExchangeHolder expected = expectedHolder(camelContext, key, exchange);
             LOG.trace("Removing an exchange with ID {} for key {} in an optimistic manner.", exchange.getExchangeId(), key);
             if (useRecovery) {
                 // Use a Hazelcast transaction to atomically apply the conditional remove and the recovery write.
@@ -385,7 +470,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
                     TransactionalMap<String, DefaultExchangeHolder> tCache = tCtx.getMap(cache.getName());
                     TransactionalMap<String, DefaultExchangeHolder> tPersistentCache = tCtx.getMap(persistedCache.getName());
 
-                    if (!tCache.remove(key, holder)) {
+                    if (!tCache.remove(key, expected)) {
                         tCtx.rollbackTransaction();
                         LOG.error(
                                 "Optimistic locking failed for exchange with key {}: TransactionalMap#remove returned false (compare-and-delete found no matching entry).",
@@ -415,7 +500,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
                     throw new RuntimeCamelException(msg, exception);
                 }
             } else {
-                if (!cache.remove(key, holder)) {
+                if (!cache.remove(key, expected)) {
                     LOG.error(
                             "Optimistic locking failed for exchange with key {}: IMap#remove returned false (compare-and-delete found no matching entry).",
                             key);
@@ -526,6 +611,7 @@ public class HazelcastAggregationRepository extends ServiceSupport
 
     @Override
     protected void doStop() throws Exception {
+        readGroups.clear();
         if (useLocalHzInstance) {
             hazelcastInstance.getLifecycleService().shutdown();
             hazelcastInstance = null;
