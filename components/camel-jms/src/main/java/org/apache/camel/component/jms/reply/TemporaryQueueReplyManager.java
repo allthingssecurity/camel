@@ -442,8 +442,11 @@ public class TemporaryQueueReplyManager extends ReplyManagerSupport {
         }
 
         public void scheduleRefresh() {
-            refreshGeneration.incrementAndGet();
+            // clear replyTo before the new generation is visible: a consumer that resolves this generation publishes
+            // its queue after this write, so the late null cannot overwrite the new queue (no refresh would be pending
+            // any more, and replyTo would stay null until the next connection failure)
             replyTo = null;
+            refreshGeneration.incrementAndGet();
             triggerReplyDestinationRecovery();
         }
 
