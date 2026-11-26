@@ -76,4 +76,30 @@ public interface KubernetesLeaseResourceManager<T extends HasMetadata> {
      */
     T refreshLeaseRenewTime(KubernetesClient client, T leaseResource, int minUpdateIntervalSeconds);
 
+    /**
+     * Return the candidates for the leadership of the group that the lease resource records: the pods whose view of the
+     * group runs, each one as its pod name, followed by a slash and the uid of the pod when it is known. Return
+     * {@code null} if the lease resource records no candidates (it is written by an earlier version, or this lease
+     * resource type does not record them): then every member of the cluster is a candidate.
+     */
+    default Set<String> decodeCandidates(T leaseResource, String group) {
+        return null;
+    }
+
+    /**
+     * Return a copy of the lease resource (not written) that records the given candidates for the leadership of the
+     * group, or {@code null} if this lease resource type does not record candidates.
+     */
+    default T withCandidates(T leaseResource, String group, Set<String> candidates) {
+        return null;
+    }
+
+    /**
+     * Update the lease resource (such as a copy returned by {@link #withCandidates(HasMetadata, String, Set)}), if it
+     * has not changed since it was read.
+     */
+    default T optimisticUpdate(KubernetesClient client, T leaseResource) {
+        throw new UnsupportedOperationException("The lease resource type does not record candidates");
+    }
+
 }

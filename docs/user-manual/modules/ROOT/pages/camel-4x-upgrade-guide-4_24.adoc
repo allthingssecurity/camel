@@ -2824,6 +2824,25 @@ renew deadline. A view also does not try the release when its last lookup of the
 renewal failed; the Kubernetes client reports those only after its own retries. A release that is given up or not tried
 logs a WARN, and the lease is then kept until the pod is no longer ready, as before.
 
+=== camel-kubernetes - the members of a cluster view are the pods that take part in its group
+
+With the `Lease` resource type (the default), each pod whose view of a group runs (such as a pod whose clustered route
+or `master:` consumer for the group is started) records itself in the `camel.apache.org/candidates` annotation of the
+lease of the group, and removes itself when the view stops. The members of a Kubernetes cluster view
+(`CamelClusterView.getMembers()`, and the member added and removed events) are now the ready pods with the cluster
+labels that the lease lists as candidates, not every ready pod with the cluster labels. A lease written by an earlier
+version has no such annotation, and then every ready pod is a member, as before. With the `ConfigMap` resource type
+nothing changes.
+
+`RebalancingCamelClusterService` balances the partitions with the same members among those members. Before, it counted
+every ready pod as a member of every partition. When the route of a pod for a partition stopped while the pod stayed
+ready, the other pods could keep the partition disabled, as they already led their share, so no pod led it. Now the
+other pods take it over. The pods need to update the lease (as they already do to take or renew it), so no change of
+the RBAC rules is needed.
+
+For a subclass of `RebalancingCamelClusterService`: the protected method `members()` is replaced by
+`membersByPartition()`, and `reconcile()` no longer schedules the next pass (the service does, also when a pass fails).
+
 === camel-langchain4j-embeddingstore - auto-embedding a TextSegment, a List, a Map or a POJO body, and the REMOVE id
 
 With an `embeddingModel` and no `CamelLangChain4jEmbeddingsEmbedding` header, ADD and SEARCH now embed a `TextSegment`

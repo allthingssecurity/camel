@@ -20,8 +20,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -42,15 +46,25 @@ import org.slf4j.LoggerFactory;
  * {@link CamelPreemptiveClusterService}. Each view is treated as a partition by this cluster service, and it makes sure
  * that all services belonging to the cluster own a balanced number of partitions (same number or difference at most 1
  * when not possible).
+ * <p>
+ * The members of a partition are the members of its view. Partitions with the same members are balanced among those
+ * members, so a partition that only some of the members take part in (for example because a route is stopped on the
+ * other ones) is led by one of the members that take part in it.
  */
 public class RebalancingCamelClusterService extends ServiceSupport implements CamelPreemptiveClusterService {
 
     private static final Logger LOG = LoggerFactory.getLogger(RebalancingCamelClusterService.class);
 
-    protected ScheduledExecutorService serializedExecutor;
+    // set to null by doStop: a pass that runs on an executor that is no longer this one does not schedule the next pass
+    protected volatile ScheduledExecutorService serializedExecutor;
     protected CamelPreemptiveClusterService delegate;
     protected CamelContext camelContext;
     protected final long periodMillis;
+
+    // the partitions grouped by their members in the previous pass, and whether it failed (only used by the passes,
+    // one at a time)
+    private Map<Set<String>, List<String>> previousGroups;
+    private boolean previousPassFailed;
 
     public RebalancingCamelClusterService(CamelPreemptiveClusterService delegate, long periodMillis) {
         this.delegate = ObjectHelper.notNull(delegate, "delegate");
@@ -76,19 +90,25 @@ public class RebalancingCamelClusterService extends ServiceSupport implements Ca
         super.doStart();
         ServiceHelper.startService(delegate);
         if (serializedExecutor == null) {
-            serializedExecutor = getCamelContext().getExecutorServiceManager().newSingleThreadScheduledExecutor(this,
-                    "RebalancingClusterService");
-            serializedExecutor.execute(this::reconcile);
+            ScheduledExecutorService executor = getCamelContext().getExecutorServiceManager()
+                    .newSingleThreadScheduledExecutor(this, "RebalancingClusterService");
+            previousGroups = null;
+            previousPassFailed = false;
+            serializedExecutor = executor;
+            executor.execute(() -> reconcileAndReschedule(executor));
         }
     }
 
     @Override
     protected void doStop() throws Exception {
         super.doStop();
-        if (serializedExecutor != null) {
-            getCamelContext().getExecutorServiceManager().shutdown(serializedExecutor);
-        }
+        ScheduledExecutorService executor = serializedExecutor;
         serializedExecutor = null;
+        if (executor != null) {
+            // the pending pass is dropped (a scheduled executor runs its delayed tasks after a plain shutdown), so a
+            // start does not add a second chain of passes
+            getCamelContext().getExecutorServiceManager().shutdownNow(executor);
+        }
         ServiceHelper.stopService(delegate);
     }
 
@@ -104,13 +124,62 @@ public class RebalancingCamelClusterService extends ServiceSupport implements Ca
         this.delegate = delegate;
     }
 
-    protected void reconcile() {
-        Integer n = members();
-        List<String> partitions = partitionList();
-        int k = partitions.size();
+    /**
+     * Runs a rebalancing pass, and schedules the next one on the same executor while it is the executor of this
+     * service, also when the pass fails.
+     */
+    private void reconcileAndReschedule(ScheduledExecutorService executor) {
+        try {
+            reconcile();
+            previousPassFailed = false;
+        } catch (Throwable e) {
+            if (previousPassFailed) {
+                LOG.debug("Error while rebalancing the partitions (will try again in {} ms)", periodMillis, e);
+            } else {
+                LOG.warn("Error while rebalancing the partitions (will try again in {} ms): {}", periodMillis,
+                        e.toString());
+                LOG.debug("Exception thrown while rebalancing the partitions", e);
+            }
+            previousPassFailed = true;
+        } finally {
+            if (executor == serializedExecutor) {
+                try {
+                    executor.schedule(() -> reconcileAndReschedule(executor), periodMillis, TimeUnit.MILLISECONDS);
+                } catch (RejectedExecutionException e) {
+                    LOG.debug("Cannot schedule the next rebalancing pass as the service is stopping");
+                }
+            }
+        }
+    }
 
-        if (n == null || n == 0 || k == 0) {
-            rescheduleAfterDelay();
+    protected void reconcile() {
+        Map<String, Set<String>> members = membersByPartition();
+        if (members == null || members.isEmpty()) {
+            return;
+        }
+
+        // partitions with the same members are balanced among those members: a member that does not take part in a
+        // partition is not counted for it, so the partition is not left without leader
+        Map<Set<String>, List<String>> groups = new LinkedHashMap<>();
+        members.forEach((partition, partitionMembers) -> groups.computeIfAbsent(partitionMembers, m -> new ArrayList<>())
+                .add(partition));
+        Map<Set<String>, List<String>> lastGroups = previousGroups;
+        previousGroups = groups;
+        if (groups.size() > 1 && !groups.equals(lastGroups)) {
+            // the views refresh their members one at a time, so different members can also mean that some views have
+            // not seen a change yet: wait for the next pass to see the same groups
+            LOG.debug("Partitions have different members, waiting for the next pass: {}", groups);
+            return;
+        }
+
+        for (Map.Entry<Set<String>, List<String>> group : groups.entrySet()) {
+            rebalance(group.getValue(), group.getKey().size());
+        }
+    }
+
+    private void rebalance(List<String> partitions, int n) {
+        int k = partitions.size();
+        if (n == 0 || k == 0) {
             return;
         }
 
@@ -133,7 +202,6 @@ public class RebalancingCamelClusterService extends ServiceSupport implements Ca
 
         rebalanceGroup(main, quota);
         rebalanceGroup(remaining, 1);
-        rescheduleAfterDelay();
     }
 
     protected void rebalanceGroup(List<String> partitions, int quota) {
@@ -218,11 +286,15 @@ public class RebalancingCamelClusterService extends ServiceSupport implements Ca
         return partitions;
     }
 
-    protected Integer members() {
-        Set<String> members = null;
-        for (String group : partitionList()) {
+    /**
+     * The members of each partition in use that this member takes part in, sorted by partition, or {@code null} if the
+     * members of a view cannot be read.
+     */
+    protected Map<String, Set<String>> membersByPartition() {
+        Map<String, Set<String>> members = new TreeMap<>();
+        for (String partition : partitionList()) {
             try {
-                CamelPreemptiveClusterView view = retainViewInUse(group);
+                CamelPreemptiveClusterView view = retainViewInUse(partition);
                 if (view == null) {
                     // released since the partitions were listed
                     continue;
@@ -230,20 +302,22 @@ public class RebalancingCamelClusterService extends ServiceSupport implements Ca
                 try {
                     Set<String> viewMembers
                             = view.getMembers().stream().map(CamelClusterMember::getId).collect(Collectors.toSet());
-                    if (members != null && !members.equals(viewMembers)) {
-                        LOG.debug("View members don't match: {} vs {}", members, viewMembers);
-                        return null;
+                    // a view that does not list the local member yet has not seen it take part in the partition
+                    if (viewMembers.contains(view.getLocalMember().getId())) {
+                        members.put(partition, viewMembers);
+                    } else {
+                        LOG.debug("The members {} of partition {} do not include the local member yet", viewMembers,
+                                partition);
                     }
-                    members = viewMembers;
                 } finally {
                     releaseRetainedView(view);
                 }
             } catch (Exception ex) {
-                LOG.warn("Could not get view {}", group, ex);
+                LOG.warn("Could not get view {}", partition, ex);
                 return null;
             }
         }
-        return members != null ? members.size() : 0;
+        return members;
     }
 
     /**
@@ -276,12 +350,6 @@ public class RebalancingCamelClusterService extends ServiceSupport implements Ca
         } catch (Exception ex) {
             LOG.warn("Could not release view {}", view.getNamespace(), ex);
         }
-    }
-
-    private void rescheduleAfterDelay() {
-        this.serializedExecutor.schedule(this::reconcile,
-                this.periodMillis,
-                TimeUnit.MILLISECONDS);
     }
 
     @Override

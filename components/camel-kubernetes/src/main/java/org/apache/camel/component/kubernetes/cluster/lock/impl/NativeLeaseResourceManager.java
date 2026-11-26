@@ -17,8 +17,11 @@
 package org.apache.camel.component.kubernetes.cluster.lock.impl;
 
 import java.time.ZonedDateTime;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import io.fabric8.kubernetes.api.model.coordination.v1.Lease;
 import io.fabric8.kubernetes.api.model.coordination.v1.LeaseBuilder;
@@ -27,6 +30,11 @@ import org.apache.camel.component.kubernetes.cluster.lock.KubernetesLeaseResourc
 import org.apache.camel.component.kubernetes.cluster.lock.LeaderInfo;
 
 public class NativeLeaseResourceManager implements KubernetesLeaseResourceManager<Lease> {
+
+    /**
+     * The annotation of the lease that lists the candidates for the leadership of the group (comma separated).
+     */
+    public static final String CANDIDATES_ANNOTATION = "camel.apache.org/candidates";
 
     @Override
     public LeaderInfo decodeLeaderInfo(Lease lease, Set<String> members, String group) {
@@ -73,6 +81,35 @@ public class NativeLeaseResourceManager implements KubernetesLeaseResourceManage
                     .lockResourceVersion(leaseResource.getMetadata().getResourceVersion()).update();
         }
         return leaseResource;
+    }
+
+    @Override
+    public Set<String> decodeCandidates(Lease lease, String group) {
+        if (lease == null || lease.getMetadata() == null || lease.getMetadata().getAnnotations() == null) {
+            return null;
+        }
+        String candidates = lease.getMetadata().getAnnotations().get(CANDIDATES_ANNOTATION);
+        if (candidates == null) {
+            return null;
+        }
+        return Arrays.stream(candidates.split(",")).map(String::trim).filter(c -> !c.isEmpty())
+                .collect(Collectors.toCollection(TreeSet::new));
+    }
+
+    @Override
+    public Lease withCandidates(Lease lease, String group, Set<String> candidates) {
+        return new LeaseBuilder(lease).editOrNewMetadata()
+                .addToAnnotations(CANDIDATES_ANNOTATION, String.join(",", new TreeSet<>(candidates)))
+                .endMetadata()
+                .build();
+    }
+
+    @Override
+    public Lease optimisticUpdate(KubernetesClient client, Lease lease) {
+        return client.leases()
+                .inNamespace(lease.getMetadata().getNamespace())
+                .resource(lease)
+                .lockResourceVersion(lease.getMetadata().getResourceVersion()).update();
     }
 
     @Override

@@ -20,10 +20,14 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -83,6 +87,12 @@ public class KubernetesLeadershipController implements Service {
     private volatile LeaderInfo latestLeaderInfo;
     private volatile HasMetadata latestLeaseResource;
     private volatile Set<String> latestMembers;
+    // the uid (or null) of each of the latestMembers
+    private volatile Map<String, String> latestMemberUids = Collections.emptyMap();
+
+    // whether the lease resource has listed this pod as a candidate (written by the refreshes, read by
+    // releaseLeadership once they have ended)
+    private volatile boolean candidateRecorded;
 
     // whether the last lookup (of the lease or of the pods) or renewal of the lease failed: written by the refreshes
     // (not for a failure caused by stop), read by releaseLeadership
@@ -172,36 +182,52 @@ public class KubernetesLeadershipController implements Service {
     /**
      * Releases the leadership after {@link #stop(long)}: if the leadership of this pod has taken effect and the lease
      * names this pod, the pod is removed from it, so that another pod can take over the leadership at once instead of
-     * when this pod is no longer ready. The release is given up when the time given to {@link #stop(long)} has passed.
-     * It is not tried when the last lookup (of the lease or of the pods) or renewal of the lease failed (after the own
-     * retries of the Kubernetes client), as it would then most likely wait for an API server that does not answer. A
-     * failure is logged, and the lease is then kept until this pod is no longer ready (as before).
+     * when this pod is no longer ready. The pod is also removed from the candidates for the leadership that the lease
+     * lists, so that the other pods no longer count it as a member of the group. The release is given up when the time
+     * given to {@link #stop(long)} has passed. It is not tried when the last lookup (of the lease or of the pods) or
+     * renewal of the lease failed (after the own retries of the Kubernetes client), as it would then most likely wait
+     * for an API server that does not answer. A failure is logged, and the lease is then kept until this pod is no
+     * longer ready (as before).
      */
     public void releaseLeadership() {
         String group = this.lockConfiguration.getGroupName();
         State state = this.currentState;
-        if (state != State.LEADER && state != State.LOSING_LEADERSHIP && state != State.LEADERSHIP_LOST) {
+        boolean releaseLease = state == State.LEADER || state == State.LOSING_LEADERSHIP || state == State.LEADERSHIP_LOST;
+        if (!releaseLease) {
             // when becoming leader, the pod waits for the previous leader to give up the leadership: an empty lease
             // would let another pod take it over with immediate effect while the previous leader may still act as one
             LOG.debug("{} The leadership for group {} has not taken effect ({}), the lease is not released", logPrefix,
                     group, state);
-            return;
+            if (!this.candidateRecorded) {
+                return;
+            }
         }
         if (this.lastLeaseCallFailed) {
-            LOG.warn("{} The last lookup or renewal of the lease for group {} failed, so the release of the lease is not"
-                     + " tried: if the lease still names the current pod, other pods can take it over once the current"
-                     + " pod is no longer ready",
-                    logPrefix, group);
+            if (releaseLease) {
+                LOG.warn("{} The last lookup or renewal of the lease for group {} failed, so the release of the lease is"
+                         + " not tried: if the lease still names the current pod, other pods can take it over once the"
+                         + " current pod is no longer ready",
+                        logPrefix, group);
+            } else {
+                LOG.debug("{} The last lookup or renewal of the lease for group {} failed, the current pod is not removed"
+                          + " from the candidates",
+                        logPrefix, group);
+            }
             return;
         }
         Long deadline = this.stopDeadlineNanos;
         long remaining = deadline != null
                 ? deadline - System.nanoTime() : TimeUnit.MILLISECONDS.toNanos(this.lockConfiguration.getRenewDeadlineMillis());
         if (remaining <= 0) {
-            LOG.warn("{} No time is left to release the leadership for group {}, so the release of the lease is not tried:"
-                     + " if the lease still names the current pod, other pods can take it over once the current pod is"
-                     + " no longer ready",
-                    logPrefix, group);
+            if (releaseLease) {
+                LOG.warn("{} No time is left to release the leadership for group {}, so the release of the lease is not"
+                         + " tried: if the lease still names the current pod, other pods can take it over once the current"
+                         + " pod is no longer ready",
+                        logPrefix, group);
+            } else {
+                LOG.debug("{} No time is left to remove the current pod from the candidates for group {}", logPrefix,
+                        group);
+            }
             return;
         }
         // the Kubernetes client tries a request again on its own when the API server cannot be reached or answers
@@ -210,7 +236,7 @@ public class KubernetesLeadershipController implements Service {
         ExecutorService executor = camelContext.getExecutorServiceManager().newSingleThreadExecutor(this,
                 "CamelKubernetesLeadershipRelease");
         try {
-            Future<?> release = executor.submit(this::doReleaseLeadership);
+            Future<?> release = executor.submit(() -> doReleaseLeadership(releaseLease));
             release.get(remaining, TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             LOG.warn("{} Unable to release the leadership for group {} in time, other pods can take it over once the"
@@ -229,7 +255,7 @@ public class KubernetesLeadershipController implements Service {
         }
     }
 
-    private void doReleaseLeadership() {
+    private void doReleaseLeadership(boolean releaseLease) {
         String group = this.lockConfiguration.getGroupName();
         // a conflict means that the lease was changed in the meantime (such as the renewal of another group in a
         // shared ConfigMap), so it is read again
@@ -250,9 +276,16 @@ public class KubernetesLeadershipController implements Service {
                 LOG.debug("{} Exception thrown during lease resource lookup", logPrefix, e);
                 return;
             }
-            String leader = leaseResource != null
-                    ? leaseManager.decodeLeaderInfo(leaseResource, Collections.emptySet(), group).getLeader() : null;
-            if (!this.lockConfiguration.getPodName().equals(leader)) {
+            if (leaseResource == null) {
+                LOG.debug("{} There is no lease for group {}, nothing to release", logPrefix, group);
+                return;
+            }
+            String podName = this.lockConfiguration.getPodName();
+            boolean holder = releaseLease
+                    && podName.equals(leaseManager.decodeLeaderInfo(leaseResource, Collections.emptySet(), group).getLeader());
+            Set<String> candidates = leaseManager.decodeCandidates(leaseResource, group);
+            boolean candidate = candidates != null && candidates.stream().anyMatch(c -> podName.equals(podNameOf(c)));
+            if (!holder && !candidate) {
                 LOG.debug("{} The lease for group {} does not name the current pod, nothing to release", logPrefix, group);
                 return;
             }
@@ -261,9 +294,20 @@ public class KubernetesLeadershipController implements Service {
                 LOG.debug("{} Interrupted before releasing the leadership", logPrefix);
                 return;
             }
+            HasMetadata updated = leaseResource;
+            if (candidate) {
+                Set<String> others = new TreeSet<>();
+                candidates.stream().filter(c -> !podName.equals(podNameOf(c))).forEach(others::add);
+                updated = leaseManager.withCandidates(leaseResource, group, others);
+            }
             try {
-                leaseManager.optimisticDeleteLeaderInfo(kubernetesClient, leaseResource, group);
-                LOG.info("{} Released the leadership for group {}", logPrefix, group);
+                if (holder) {
+                    leaseManager.optimisticDeleteLeaderInfo(kubernetesClient, updated, group);
+                    LOG.info("{} Released the leadership for group {}", logPrefix, group);
+                } else {
+                    leaseManager.optimisticUpdate(kubernetesClient, updated);
+                    LOG.debug("{} Removed the current pod from the candidates for group {}", logPrefix, group);
+                }
                 return;
             } catch (Exception e) {
                 if (attempt < 3 && e instanceof KubernetesClientException kce && kce.getCode() == 409) {
@@ -406,7 +450,7 @@ public class KubernetesLeadershipController implements Service {
         Optional<String> leader = Optional.ofNullable(this.latestLeaderInfo.getLeader())
                 .filter(l -> !l.equals(this.lockConfiguration.getPodName()));
         this.leaderNotifier.refreshLeadership(leader, System.currentTimeMillis(),
-                this.lockConfiguration.getLeaseDurationMillis(), this.latestLeaderInfo.getMembers());
+                this.lockConfiguration.getLeaseDurationMillis(), candidateMembers());
         rescheduleAfterDelay();
     }
 
@@ -501,7 +545,7 @@ public class KubernetesLeadershipController implements Service {
 
             this.leaderNotifier.refreshLeadership(Optional.of(this.lockConfiguration.getPodName()), timeBeforePulling,
                     this.lockConfiguration.getRenewDeadlineMillis(),
-                    this.latestLeaderInfo.getMembers());
+                    candidateMembers());
 
             HasMetadata newLease;
             try {
@@ -521,7 +565,7 @@ public class KubernetesLeadershipController implements Service {
             this.currentState = State.NOT_LEADER;
             // set a empty leader to signal leadership loss
             this.leaderNotifier.refreshLeadership(Optional.empty(), System.currentTimeMillis(),
-                    lockConfiguration.getLeaseDurationMillis(), this.latestLeaderInfo.getMembers());
+                    lockConfiguration.getLeaseDurationMillis(), candidateMembers());
 
             // restart from scratch to acquire leadership
             executeNextRefresh();
@@ -555,9 +599,9 @@ public class KubernetesLeadershipController implements Service {
             return false;
         }
 
-        Set<String> members;
+        Map<String, String> memberUids;
         try {
-            members = Objects.requireNonNull(pullClusterMembers(), "Retrieved a null set of members");
+            memberUids = Objects.requireNonNull(pullClusterMembers(), "Retrieved a null set of members");
         } catch (Exception e) {
             leaseCallFailed();
             LOG.warn("{} Unable to retrieve the list of cluster members from Kubernetes", logPrefix);
@@ -565,9 +609,81 @@ public class KubernetesLeadershipController implements Service {
             return false;
         }
 
-        updateLatestLeaderInfo(leaseResource, members);
+        this.latestMemberUids = memberUids;
+        updateLatestLeaderInfo(leaseResource, new HashSet<>(memberUids.keySet()));
         leaseCallSucceeded();
+        recordCandidate();
         return true;
+    }
+
+    /**
+     * Records this pod as a candidate for the leadership of the group in the lease resource, if the lease resource
+     * records candidates and does not list it yet, so that the other pods count it as a member of the group. A failure
+     * is tried again on the next lookup.
+     */
+    private void recordCandidate() {
+        HasMetadata leaseResource = this.latestLeaseResource;
+        String podName = this.lockConfiguration.getPodName();
+        Map<String, String> memberUids = this.latestMemberUids;
+        if (leaseResource == null || !memberUids.containsKey(podName) || this.serializedExecutor == null) {
+            // no lease resource yet (the pod records itself after it is created), the pod is not a member (not ready),
+            // or the controller is stopping (releaseLeadership removes the pod from the candidates)
+            return;
+        }
+        String group = this.lockConfiguration.getGroupName();
+        String candidate = candidateId(podName, memberUids.get(podName));
+        Set<String> candidates = leaseManager.decodeCandidates(leaseResource, group);
+        if (candidates != null && candidates.contains(candidate)) {
+            this.candidateRecorded = true;
+            return;
+        }
+        Set<String> updated = new TreeSet<>();
+        if (candidates != null) {
+            // without the entries of an earlier pod with the same name
+            candidates.stream().filter(c -> !podName.equals(podNameOf(c))).forEach(updated::add);
+        }
+        updated.add(candidate);
+        HasMetadata withCandidates = leaseManager.withCandidates(leaseResource, group, updated);
+        if (withCandidates == null) {
+            // this lease resource type does not record candidates
+            return;
+        }
+        // before the update, whose outcome is unknown when it fails: releaseLeadership then looks at the lease
+        this.candidateRecorded = true;
+        try {
+            HasMetadata updatedLeaseResource = leaseManager.optimisticUpdate(kubernetesClient, withCandidates);
+            updateLatestLeaderInfo(updatedLeaseResource, this.latestMembers);
+            LOG.debug("{} Recorded the current pod as a candidate for the leadership of group {}", logPrefix, group);
+        } catch (Exception e) {
+            // such as a conflict with another update of the lease resource
+            LOG.debug("{} Unable to record the current pod as a candidate for the leadership of group {} (will try again)",
+                    logPrefix, group, e);
+        }
+    }
+
+    /**
+     * The members of the cluster that are candidates for the leadership of the group: the members that the lease
+     * resource lists as candidates, or all the members if it lists none (see
+     * {@link KubernetesLeaseResourceManager#decodeCandidates(HasMetadata, String)}).
+     */
+    private Set<String> candidateMembers() {
+        Set<String> members = this.latestMembers;
+        Set<String> candidates = leaseManager.decodeCandidates(this.latestLeaseResource, this.lockConfiguration.getGroupName());
+        if (candidates == null) {
+            return members;
+        }
+        Map<String, String> memberUids = this.latestMemberUids;
+        return members.stream().filter(m -> candidates.contains(candidateId(m, memberUids.get(m))))
+                .collect(Collectors.toSet());
+    }
+
+    private static String candidateId(String podName, String podUid) {
+        return podUid != null ? podName + "/" + podUid : podName;
+    }
+
+    private static String podNameOf(String candidate) {
+        int slash = candidate.indexOf('/');
+        return slash >= 0 ? candidate.substring(0, slash) : candidate;
     }
 
     private void leaseCallSucceeded() {
@@ -717,16 +833,20 @@ public class KubernetesLeadershipController implements Service {
         LOG.debug("{} Current leader info: {}", logPrefix, this.latestLeaderInfo);
     }
 
-    private Set<String> pullClusterMembers() {
+    /**
+     * The running and ready pods with the cluster labels: the uid (or null) of each pod by its name.
+     */
+    private Map<String, String> pullClusterMembers() {
         List<Pod> pods = kubernetesClient.pods()
                 .inNamespace(this.lockConfiguration.getKubernetesResourcesNamespaceOrDefault(kubernetesClient))
                 .withLabels(this.lockConfiguration.getClusterLabels()).list().getItems();
 
-        return pods.stream()
+        Map<String, String> members = new HashMap<>();
+        pods.stream()
                 .filter(PodStatusUtil::isRunning)
                 .filter(Readiness::isPodReady)
-                .map(pod -> pod.getMetadata().getName())
-                .collect(Collectors.toSet());
+                .forEach(pod -> members.put(pod.getMetadata().getName(), pod.getMetadata().getUid()));
+        return members;
     }
 
     private long jitter(long num, double factor) {
