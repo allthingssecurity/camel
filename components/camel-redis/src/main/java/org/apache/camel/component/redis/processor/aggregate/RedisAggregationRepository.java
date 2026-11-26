@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -95,21 +96,27 @@ public class RedisAggregationRepository extends ServiceSupport
      */
     private final Set<String> unreadableExchangeIds = ConcurrentHashMap.newKeySet();
     private boolean shutdownRedisson;
+    /**
+     * Optimistic locking: the groups that {@link #get(CamelContext, String)} returned, each with its key and the value
+     * that was read from Redis, to compare the stored group with (identity of the exchange, weak so a group that is
+     * never updated or removed does not stay).
+     */
+    private final Map<Exchange, ReadGroup> readGroups = Collections.synchronizedMap(new WeakHashMap<>());
+
+    private record ReadGroup(String key, Object value) {
+    }
 
     /**
      * Atomic Lua script for optimistic removal with recovery.
      *
      * <p>
-     * Implements compare-and-swap by comparing the current serialized exchange in the active map with the expected
-     * serialized holder. If they match, the script writes the holder to the recovery map and removes it from the active
-     * map atomically.
+     * Implements compare-and-swap by comparing the current value in the active map with the expected value, which is
+     * the value that {@link #get(CamelContext, String)} read. If they match, the script writes the given exchange (with
+     * the last aggregated message and the properties the aggregator set) to the recovery map and removes the group from
+     * the active map atomically.
      *
      * <p>
-     * Returns 1 on success and 0 if the active exchange does not match the expected holder.
-     *
-     * <p>
-     * The comparison uses serialized bytes. Therefore, the serialization must produce identical bytes for the same
-     * holder when storing and comparing it.
+     * Returns 1 on success and 0 if the active exchange does not match the expected value.
      *
      * <p>
      * The {@code HSET} into the recovery map is intentionally placed before the {@code HDEL} from the active map. Redis
@@ -124,7 +131,7 @@ public class RedisAggregationRepository extends ServiceSupport
                 return 0
             end
 
-            redis.call('HSET', KEYS[2], ARGV[3], current)
+            redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
             redis.call('HDEL', KEYS[1], ARGV[1])
 
             return 1
@@ -222,7 +229,7 @@ public class RedisAggregationRepository extends ServiceSupport
                 throw new OptimisticLockingException();
             }
         } else {
-            Object oldHolder = marshallHolder(oldExchange);
+            Object oldHolder = readValue(key, oldExchange);
             Object newHolder = marshallHolder(newExchange);
             if (!cache.replace(key, oldHolder, newHolder)) {
                 LOG.warn(
@@ -383,9 +390,35 @@ public class RedisAggregationRepository extends ServiceSupport
         return maximumRedeliveries;
     }
 
+    /**
+     * Gets the group of the correlation key.
+     * <p>
+     * With optimistic locking, {@link #add(CamelContext, String, Exchange, Exchange)} and
+     * {@link #remove(CamelContext, String, Exchange)} compare the stored group with the value that this method read
+     * from Redis, not with the exchange they are given serialized again: the Aggregate EIP sets properties on the group
+     * before it removes it, and an aggregation strategy may change the group and return it.
+     */
     @Override
     public Exchange get(CamelContext camelContext, String key) {
-        return unmarshallExchange(camelContext, mapName, key, cache.get(key));
+        Object value = cache.get(key);
+        Exchange exchange = unmarshallExchange(camelContext, mapName, key, value);
+        if (optimistic && exchange != null) {
+            readGroups.put(exchange, new ReadGroup(key, value));
+        }
+        return exchange;
+    }
+
+    /**
+     * The value to compare the stored group with, for an optimistic update or remove of the group that the exchange
+     * stands for: the value that {@link #get(CamelContext, String)} read for this key, or else the exchange as it is
+     * now.
+     */
+    private Object readValue(String key, Exchange exchange) {
+        ReadGroup read = readGroups.remove(exchange);
+        if (read != null && read.key().equals(key)) {
+            return read.value();
+        }
+        return marshallHolder(exchange);
     }
 
     /**
@@ -459,8 +492,9 @@ public class RedisAggregationRepository extends ServiceSupport
                         RScript.ReturnType.LONG,
                         List.of(mapName, persistenceMapName),
                         encode(mapCodec.getMapKeyEncoder(), key),
-                        encode(mapCodec.getMapValueEncoder(), holder),
-                        encode(mapCodec.getMapKeyEncoder(), exchange.getExchangeId()));
+                        encode(mapCodec.getMapValueEncoder(), readValue(key, exchange)),
+                        encode(mapCodec.getMapKeyEncoder(), exchange.getExchangeId()),
+                        encode(mapCodec.getMapValueEncoder(), holder));
 
                 if (result == null || result.longValue() != 1L) {
                     LOG.warn(
@@ -474,7 +508,7 @@ public class RedisAggregationRepository extends ServiceSupport
                         exchange.getExchangeId(), key);
 
             } else {
-                if (!cache.remove(key, holder)) {
+                if (!cache.remove(key, readValue(key, exchange))) {
                     LOG.warn(
                             "Optimistic locking failed for exchange with key {}: RMap#remove removed no Exchanges, while it's expected to remove one.",
                             key);
@@ -657,6 +691,7 @@ public class RedisAggregationRepository extends ServiceSupport
 
     @Override
     protected void doStop() throws Exception {
+        readGroups.clear();
         if (redisson != null && shutdownRedisson) {
             redisson.shutdown();
             redisson = null;
