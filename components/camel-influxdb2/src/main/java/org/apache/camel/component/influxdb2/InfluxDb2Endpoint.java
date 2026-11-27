@@ -74,10 +74,12 @@ public class InfluxDb2Endpoint extends DefaultEndpoint {
               description = "Connection to the Influx database, of class com.influxdb.client.InfluxDBClient.class.")
     private String connectionBean;
     @UriParam
-    @Metadata(required = true, description = "The name of the organization where the time series will be stored.")
+    @Metadata(description = "The name of the organization where the time series will be stored. Needed for INSERT,"
+                            + " unless the CamelInfluxDB2Org header names it; not used by PING.")
     private String org;
     @UriParam
-    @Metadata(required = true, description = "The name of the bucket where the time series will be stored.")
+    @Metadata(description = "The name of the bucket where the time series will be stored. Needed for INSERT, unless the"
+                            + " CamelInfluxDB2Bucket header names it; not used by PING.")
     private String bucket;
     @UriParam(defaultValue = "default", description = "Define the retention policy to the data created by the endpoint.")
     @Metadata(deprecationNote = "Never read by the component: the InfluxDB 2.x write API has no retention policy,"
@@ -208,6 +210,10 @@ public class InfluxDb2Endpoint extends DefaultEndpoint {
         super.doInit();
         // InfluxDB is called at startup only to create the organization or the bucket when it is missing. A write names
         // the organization and the bucket, so an endpoint that creates neither does not need the server to start.
+        if (operation == Operation.PING) {
+            // a ping uses neither the organization nor the bucket
+            return;
+        }
         if (autoCreateOrg) {
             ensureOrgExists();
         }

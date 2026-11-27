@@ -12187,6 +12187,14 @@ response now leaves out that header and logs it at DEBUG level, instead of faili
 the route has already run. Headers with a valid name are written as before. A route that needs such a value in the
 response must set it in a header with a valid name.
 
+=== camel-influxdb2 - a ping endpoint does not look up or create the organization and the bucket
+
+An `influxdb2` endpoint with `operation=PING` no longer looks up, or creates, the organization of the `org` option and
+the bucket of the `bucket` option when it starts. A ping uses neither, so such an endpoint now starts without them and
+does not call InfluxDB at startup. Before, it failed to start without an `org`, unless `autoCreateOrg` and
+`autoCreateBucket` were both false. Create the organization and the bucket with an `INSERT` endpoint, or in InfluxDB,
+if a route relied on a ping endpoint to create them. The `org` and `bucket` options are no longer marked as required.
+
 === Kamelets - removed Kamelets
 
 The Kamelet catalog (camel-kamelets 4.24) removes Kamelets that could not work on Camel 4.23 or 4.24:
