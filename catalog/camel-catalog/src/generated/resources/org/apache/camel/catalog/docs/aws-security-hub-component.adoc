@@ -185,6 +185,9 @@ from("direct:updateFindings")
 
 Get information about the Security Hub configuration in your account.
 
+By default the producer describes the hub of the account in the region of the client. To describe the hub of a
+given ARN, set the `CamelAwsSecurityHubHubArn` header.
+
 [tabs]
 ====
 Java::

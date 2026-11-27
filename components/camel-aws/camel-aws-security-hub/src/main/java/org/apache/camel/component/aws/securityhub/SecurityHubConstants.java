@@ -23,50 +23,56 @@ import org.apache.camel.spi.Metadata;
  */
 public interface SecurityHubConstants {
 
-    @Metadata(description = "The operation we want to perform", javaType = "String")
+    @Metadata(label = "all", description = "The operation we want to perform", javaType = "String")
     String OPERATION = "CamelAwsSecurityHubOperation";
 
-    @Metadata(description = "The findings to import, as a List of AwsSecurityFinding. When not set, the findings are taken from the body: a Collection or an array of AwsSecurityFinding, or one AwsSecurityFinding.",
+    @Metadata(label = "batchImportFindings",
+              description = "The findings to import, as a List of AwsSecurityFinding. When not set, the findings are taken from the body: a Collection or an array of AwsSecurityFinding, or one AwsSecurityFinding.",
               javaType = "List<software.amazon.awssdk.services.securityhub.model.AwsSecurityFinding>")
     String FINDINGS = "CamelAwsSecurityHubFindings";
 
-    @Metadata(description = "The finding identifiers for batch update",
+    @Metadata(label = "batchUpdateFindings", description = "The finding identifiers for batch update",
               javaType = "List<software.amazon.awssdk.services.securityhub.model.AwsSecurityFindingIdentifier>")
     String FINDING_IDENTIFIERS = "CamelAwsSecurityHubFindingIdentifiers";
 
-    @Metadata(description = "The filters to apply when retrieving findings. It must be an AwsSecurityFindingFilters object; a value of another type, such as JSON text, fails the exchange.",
+    @Metadata(label = "getFindings",
+              description = "The filters to apply when retrieving findings. It must be an AwsSecurityFindingFilters object; a value of another type, such as JSON text, fails the exchange.",
               javaType = "software.amazon.awssdk.services.securityhub.model.AwsSecurityFindingFilters")
     String FILTERS = "CamelAwsSecurityHubFilters";
 
-    @Metadata(description = "The note to add to findings during update. It must be a NoteUpdate object; a value of another type fails the exchange.",
+    @Metadata(label = "batchUpdateFindings",
+              description = "The note to add to findings during update. It must be a NoteUpdate object; a value of another type fails the exchange.",
               javaType = "software.amazon.awssdk.services.securityhub.model.NoteUpdate")
     String NOTE = "CamelAwsSecurityHubNote";
 
-    @Metadata(description = "The severity to set on findings during update. It must be a SeverityUpdate object; a value of another type fails the exchange.",
+    @Metadata(label = "batchUpdateFindings",
+              description = "The severity to set on findings during update. It must be a SeverityUpdate object; a value of another type fails the exchange.",
               javaType = "software.amazon.awssdk.services.securityhub.model.SeverityUpdate")
     String SEVERITY = "CamelAwsSecurityHubSeverity";
 
-    @Metadata(description = "The workflow status to set on findings. It must be a WorkflowUpdate object; a value of another type fails the exchange.",
+    @Metadata(label = "batchUpdateFindings",
+              description = "The workflow status to set on findings. It must be a WorkflowUpdate object; a value of another type fails the exchange.",
               javaType = "software.amazon.awssdk.services.securityhub.model.WorkflowUpdate")
     String WORKFLOW = "CamelAwsSecurityHubWorkflow";
 
-    @Metadata(description = "The verification state to set on findings", javaType = "String")
+    @Metadata(label = "batchUpdateFindings", description = "The verification state to set on findings", javaType = "String")
     String VERIFICATION_STATE = "CamelAwsSecurityHubVerificationState";
 
-    @Metadata(description = "The confidence level to set on findings", javaType = "Integer")
+    @Metadata(label = "batchUpdateFindings", description = "The confidence level to set on findings", javaType = "Integer")
     String CONFIDENCE = "CamelAwsSecurityHubConfidence";
 
-    @Metadata(description = "The criticality level to set on findings", javaType = "Integer")
+    @Metadata(label = "batchUpdateFindings", description = "The criticality level to set on findings", javaType = "Integer")
     String CRITICALITY = "CamelAwsSecurityHubCriticality";
 
-    @Metadata(description = "User-defined fields to add to findings", javaType = "Map<String, String>")
+    @Metadata(label = "batchUpdateFindings", description = "User-defined fields to add to findings",
+              javaType = "Map<String, String>")
     String USER_DEFINED_FIELDS = "CamelAwsSecurityHubUserDefinedFields";
 
-    @Metadata(description = "Related findings to associate",
+    @Metadata(label = "batchUpdateFindings", description = "Related findings to associate",
               javaType = "List<software.amazon.awssdk.services.securityhub.model.RelatedFinding>")
     String RELATED_FINDINGS = "CamelAwsSecurityHubRelatedFindings";
 
-    @Metadata(description = "The types to assign to findings", javaType = "List<String>")
+    @Metadata(label = "batchUpdateFindings", description = "The types to assign to findings", javaType = "List<String>")
     String TYPES = "CamelAwsSecurityHubTypes";
 
     // Pagination constants
@@ -75,7 +81,7 @@ public interface SecurityHubConstants {
               javaType = "String")
     String NEXT_TOKEN = "CamelAwsSecurityHubNextToken";
 
-    @Metadata(label = "getFindings",
+    @Metadata(label = "getFindings listEnabledProductsForImport getFindingHistory",
               description = "The maximum number of results to return", javaType = "Integer")
     String MAX_RESULTS = "CamelAwsSecurityHubMaxResults";
 
@@ -110,4 +116,9 @@ public interface SecurityHubConstants {
     @Metadata(label = "getFindingAggregator",
               description = "The ARN of the finding aggregator to retrieve", javaType = "String")
     String FINDING_AGGREGATOR_ARN = "CamelAwsSecurityHubFindingAggregatorArn";
+
+    @Metadata(label = "describeHub",
+              description = "The ARN of the hub to describe. When not set, describeHub describes the hub of the account in the region of the client.",
+              javaType = "String")
+    String HUB_ARN = "CamelAwsSecurityHubHubArn";
 }

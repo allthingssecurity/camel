@@ -37,7 +37,7 @@ public class SecurityHubConfiguration implements Cloneable, AwsCommonConfigurati
     @UriParam(label = "security", security = "secret")
     private String sessionToken;
     @UriParam
-    @Metadata(required = true, defaultValue = "batchImportFindings")
+    @Metadata(defaultValue = "batchImportFindings")
     private SecurityHubOperations operation = SecurityHubOperations.batchImportFindings;
     @UriParam(label = "proxy", enums = "HTTP,HTTPS", defaultValue = "HTTPS")
     private Protocol proxyProtocol = Protocol.HTTPS;

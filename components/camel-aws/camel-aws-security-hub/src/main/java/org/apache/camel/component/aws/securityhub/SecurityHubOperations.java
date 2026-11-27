@@ -52,7 +52,7 @@ public enum SecurityHubOperations {
     listEnabledProductsForImport,
 
     /**
-     * Get aggregated findings count
+     * Get the configuration of a finding aggregator
      */
     getFindingAggregator
 }

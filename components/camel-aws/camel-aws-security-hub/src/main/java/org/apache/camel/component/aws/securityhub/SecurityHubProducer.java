@@ -377,6 +377,10 @@ public class SecurityHubProducer extends DefaultProducer {
                 securityHubClient::describeHub,
                 () -> {
                     DescribeHubRequest.Builder builder = DescribeHubRequest.builder();
+                    String hubArn = exchange.getIn().getHeader(SecurityHubConstants.HUB_ARN, String.class);
+                    if (ObjectHelper.isNotEmpty(hubArn)) {
+                        builder.hubArn(hubArn);
+                    }
                     return securityHubClient.describeHub(builder.build());
                 },
                 "Describe Hub",

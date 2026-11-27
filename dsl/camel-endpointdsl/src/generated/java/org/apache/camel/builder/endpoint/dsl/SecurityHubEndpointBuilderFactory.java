@@ -50,7 +50,6 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.aws.securityhub.SecurityHubOperations</code> type.
          * 
-         * Required: true
          * Default: batchImportFindings
          * Group: producer
          * 
@@ -67,7 +66,6 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.aws.securityhub.SecurityHubOperations</code> type.
          * 
-         * Required: true
          * Default: batchImportFindings
          * Group: producer
          * 
@@ -600,7 +598,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: producer
+         * Group: all
          * 
          * @return the name of the header {@code AwsSecurityHubOperation}.
          */
@@ -615,7 +613,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option is a: {@code
          * List<software.amazon.awssdk.services.securityhub.model.AwsSecurityFinding>} type.
          * 
-         * Group: producer
+         * Group: batchImportFindings
          * 
          * @return the name of the header {@code AwsSecurityHubFindings}.
          */
@@ -628,7 +626,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option is a: {@code
          * List<software.amazon.awssdk.services.securityhub.model.AwsSecurityFindingIdentifier>} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code
          * AwsSecurityHubFindingIdentifiers}.
@@ -644,7 +642,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option is a: {@code
          * software.amazon.awssdk.services.securityhub.model.AwsSecurityFindingFilters} type.
          * 
-         * Group: producer
+         * Group: getFindings
          * 
          * @return the name of the header {@code AwsSecurityHubFilters}.
          */
@@ -658,7 +656,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option is a: {@code
          * software.amazon.awssdk.services.securityhub.model.NoteUpdate} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubNote}.
          */
@@ -673,7 +671,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * software.amazon.awssdk.services.securityhub.model.SeverityUpdate}
          * type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubSeverity}.
          */
@@ -688,7 +686,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * software.amazon.awssdk.services.securityhub.model.WorkflowUpdate}
          * type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubWorkflow}.
          */
@@ -700,7 +698,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code
          * AwsSecurityHubVerificationState}.
@@ -713,7 +711,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code Integer} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubConfidence}.
          */
@@ -725,7 +723,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code Integer} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubCriticality}.
          */
@@ -737,7 +735,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code Map<String, String>} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code
          * AwsSecurityHubUserDefinedFields}.
@@ -751,7 +749,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * The option is a: {@code
          * List<software.amazon.awssdk.services.securityhub.model.RelatedFinding>} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubRelatedFindings}.
          */
@@ -763,7 +761,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code List<String>} type.
          * 
-         * Group: producer
+         * Group: batchUpdateFindings
          * 
          * @return the name of the header {@code AwsSecurityHubTypes}.
          */
@@ -790,7 +788,7 @@ public interface SecurityHubEndpointBuilderFactory {
          * 
          * The option is a: {@code Integer} type.
          * 
-         * Group: getFindings
+         * Group: getFindings listEnabledProductsForImport getFindingHistory
          * 
          * @return the name of the header {@code AwsSecurityHubMaxResults}.
          */
@@ -887,6 +885,19 @@ public interface SecurityHubEndpointBuilderFactory {
          */
         public String awsSecurityHubFindingAggregatorArn() {
             return "CamelAwsSecurityHubFindingAggregatorArn";
+        }
+        /**
+         * The ARN of the hub to describe. When not set, describeHub describes
+         * the hub of the account in the region of the client.
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: describeHub
+         * 
+         * @return the name of the header {@code AwsSecurityHubHubArn}.
+         */
+        public String awsSecurityHubHubArn() {
+            return "CamelAwsSecurityHubHubArn";
         }
     }
     static SecurityHubEndpointBuilder endpointBuilder(String componentName, String path) {
