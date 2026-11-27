@@ -70,15 +70,17 @@ public class AsteriskEndpoint extends DefaultEndpoint implements EndpointService
     @UriParam
     @Metadata(required = true)
     private String hostname;
+    @UriParam(defaultValue = "5038")
+    private int port = AsteriskConnection.DEFAULT_PORT;
 
     @UriParam(label = "producer")
     private AsteriskAction action;
 
-    @UriParam(security = "secret")
+    @UriParam(label = "security", security = "secret")
     @Metadata(required = true)
     private String username;
 
-    @UriParam(security = "secret")
+    @UriParam(label = "security", security = "secret")
     @Metadata(required = true)
     private String password;
 
@@ -165,6 +167,17 @@ public class AsteriskEndpoint extends DefaultEndpoint implements EndpointService
      */
     public void setHostname(String hostname) {
         this.hostname = hostname;
+    }
+
+    public int getPort() {
+        return port;
+    }
+
+    /**
+     * The port of the Asterisk Manager Interface (AMI) of the asterisk server
+     */
+    public void setPort(int port) {
+        this.port = port;
     }
 
     /**

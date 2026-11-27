@@ -59,12 +59,44 @@ public interface AsteriskEndpointBuilderFactory {
             return this;
         }
         /**
+         * The port of the Asterisk Manager Interface (AMI) of the asterisk
+         * server.
+         * 
+         * The option is a: <code>int</code> type.
+         * 
+         * Default: 5038
+         * Group: common
+         * 
+         * @param port the value to set
+         * @return the dsl builder
+         */
+        default AsteriskEndpointConsumerBuilder port(int port) {
+            doSetProperty("port", port);
+            return this;
+        }
+        /**
+         * The port of the Asterisk Manager Interface (AMI) of the asterisk
+         * server.
+         * 
+         * The option will be converted to a <code>int</code> type.
+         * 
+         * Default: 5038
+         * Group: common
+         * 
+         * @param port the value to set
+         * @return the dsl builder
+         */
+        default AsteriskEndpointConsumerBuilder port(String port) {
+            doSetProperty("port", port);
+            return this;
+        }
+        /**
          * Login password.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
          * Required: true
-         * Group: common
+         * Group: security
          * 
          * @param password the value to set
          * @return the dsl builder
@@ -79,7 +111,7 @@ public interface AsteriskEndpointBuilderFactory {
          * The option is a: <code>java.lang.String</code> type.
          * 
          * Required: true
-         * Group: common
+         * Group: security
          * 
          * @param username the value to set
          * @return the dsl builder
@@ -244,33 +276,35 @@ public interface AsteriskEndpointBuilderFactory {
             return this;
         }
         /**
-         * Login password.
+         * The port of the Asterisk Manager Interface (AMI) of the asterisk
+         * server.
          * 
-         * The option is a: <code>java.lang.String</code> type.
+         * The option is a: <code>int</code> type.
          * 
-         * Required: true
+         * Default: 5038
          * Group: common
          * 
-         * @param password the value to set
+         * @param port the value to set
          * @return the dsl builder
          */
-        default AsteriskEndpointProducerBuilder password(String password) {
-            doSetProperty("password", password);
+        default AsteriskEndpointProducerBuilder port(int port) {
+            doSetProperty("port", port);
             return this;
         }
         /**
-         * Login username.
+         * The port of the Asterisk Manager Interface (AMI) of the asterisk
+         * server.
          * 
-         * The option is a: <code>java.lang.String</code> type.
+         * The option will be converted to a <code>int</code> type.
          * 
-         * Required: true
+         * Default: 5038
          * Group: common
          * 
-         * @param username the value to set
+         * @param port the value to set
          * @return the dsl builder
          */
-        default AsteriskEndpointProducerBuilder username(String username) {
-            doSetProperty("username", username);
+        default AsteriskEndpointProducerBuilder port(String port) {
+            doSetProperty("port", port);
             return this;
         }
         /**
@@ -303,6 +337,36 @@ public interface AsteriskEndpointBuilderFactory {
          */
         default AsteriskEndpointProducerBuilder action(String action) {
             doSetProperty("action", action);
+            return this;
+        }
+        /**
+         * Login password.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Required: true
+         * Group: security
+         * 
+         * @param password the value to set
+         * @return the dsl builder
+         */
+        default AsteriskEndpointProducerBuilder password(String password) {
+            doSetProperty("password", password);
+            return this;
+        }
+        /**
+         * Login username.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Required: true
+         * Group: security
+         * 
+         * @param username the value to set
+         * @return the dsl builder
+         */
+        default AsteriskEndpointProducerBuilder username(String username) {
+            doSetProperty("username", username);
             return this;
         }
     }
@@ -390,12 +454,44 @@ public interface AsteriskEndpointBuilderFactory {
             return this;
         }
         /**
+         * The port of the Asterisk Manager Interface (AMI) of the asterisk
+         * server.
+         * 
+         * The option is a: <code>int</code> type.
+         * 
+         * Default: 5038
+         * Group: common
+         * 
+         * @param port the value to set
+         * @return the dsl builder
+         */
+        default AsteriskEndpointBuilder port(int port) {
+            doSetProperty("port", port);
+            return this;
+        }
+        /**
+         * The port of the Asterisk Manager Interface (AMI) of the asterisk
+         * server.
+         * 
+         * The option will be converted to a <code>int</code> type.
+         * 
+         * Default: 5038
+         * Group: common
+         * 
+         * @param port the value to set
+         * @return the dsl builder
+         */
+        default AsteriskEndpointBuilder port(String port) {
+            doSetProperty("port", port);
+            return this;
+        }
+        /**
          * Login password.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
          * Required: true
-         * Group: common
+         * Group: security
          * 
          * @param password the value to set
          * @return the dsl builder
@@ -410,7 +506,7 @@ public interface AsteriskEndpointBuilderFactory {
          * The option is a: <code>java.lang.String</code> type.
          * 
          * Required: true
-         * Group: common
+         * Group: security
          * 
          * @param username the value to set
          * @return the dsl builder
