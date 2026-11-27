@@ -12187,6 +12187,13 @@ response now leaves out that header and logs it at DEBUG level, instead of faili
 the route has already run. Headers with a valid name are written as before. A route that needs such a value in the
 response must set it in a header with a valid name.
 
+=== camel-mustache - startDelimiter or endDelimiter set alone is used
+
+A `mustache` endpoint that sets only one of `startDelimiter` and `endDelimiter` now compiles its templates with that
+delimiter, and the default (`{{` or `}}`) for the other one. Before, the option was ignored unless both were set. When
+delimiters other than the defaults are set but the `mustacheFactory` of the component is not a
+`DefaultMustacheFactory`, which cannot apply them, the endpoint logs a WARN.
+
 === Kamelets - removed Kamelets
 
 The Kamelet catalog (camel-kamelets 4.24) removes Kamelets that could not work on Camel 4.23 or 4.24:
