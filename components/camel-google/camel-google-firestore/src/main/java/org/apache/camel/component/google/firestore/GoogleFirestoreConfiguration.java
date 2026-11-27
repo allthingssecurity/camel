@@ -47,7 +47,7 @@ public class GoogleFirestoreConfiguration implements Cloneable, GoogleCommonConf
                             + "classpath, but you can prefix with classpath:, file:, or http: to load the resource from different systems.")
     private String serviceAccountKey;
 
-    @UriParam(label = "producer",
+    @UriParam(label = "producer", defaultValue = "setDocument",
               enums = "setDocument,getDocumentById,updateDocument,deleteDocument,queryCollection,listDocuments,listCollections,createDocument")
     private GoogleFirestoreOperations operation;
 
