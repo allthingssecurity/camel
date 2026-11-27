@@ -209,6 +209,7 @@ public class CamelEventConsumer extends DefaultConsumer {
      * Configures the event notifier to enable only the event categories that are needed based on the subscribed event
      * types.
      */
+    @SuppressWarnings("deprecation") // the deprecated ExchangeAsyncProcessingStarted type can still be subscribed to
     private void configureEventNotifier() {
         Set<CamelEvent.Type> types = getEndpoint().getEventTypes();
         if (types == null || types.isEmpty()) {
@@ -299,6 +300,14 @@ public class CamelEventConsumer extends DefaultConsumer {
                     eventNotifier.setIgnoreExchangeSentEvents(false);
                     // ExchangeSending must also be enabled for the framework to generate ExchangeSent events
                     eventNotifier.setIgnoreExchangeSendingEvents(false);
+                    break;
+                case ExchangeAsyncProcessingStarted:
+                    // deprecated, and ignored by default by EventNotifierSupport: only an endpoint that names the type
+                    // gets these events, a wildcard such as Exchange* does not turn them on
+                    if (getEndpoint().getNamedEventTypes().contains(type)) {
+                        eventNotifier.setIgnoreExchangeEvents(false);
+                        eventNotifier.setIgnoreExchangeAsyncProcessingStartedEvents(false);
+                    }
                     break;
                 case StepStarted:
                 case StepCompleted:
@@ -438,9 +447,13 @@ public class CamelEventConsumer extends DefaultConsumer {
                 break;
             case Fail:
                 if (!eventQueue.offer(event)) {
-                    throw new IllegalStateException(
-                            "Event queue full (capacity: " + getEndpoint().getAsyncQueueSize()
-                                                    + "), cannot enqueue event: " + event.getType());
+                    // Camel ignores (and logs) an exception that an event notifier throws, so the failure goes to the
+                    // exception handler of this consumer, which bridgeErrorHandler can hand to the error handler of the
+                    // route
+                    handleException("The event is not processed",
+                            new IllegalStateException(
+                                    "Event queue full (capacity: " + getEndpoint().getAsyncQueueSize()
+                                                      + "), cannot enqueue event: " + event.getType()));
                 }
                 break;
         }
