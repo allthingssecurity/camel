@@ -92,10 +92,41 @@ public interface RedshiftData2Constants {
     @Metadata(description = "The SQL statement text to run.", javaType = "String")
     String SQL_STATEMENT = "CamelAwsRedshiftDataSqlStatement";
 
-    @Metadata(description = "The parameters for the SQL statement.", javaType = "List<SqlParameterList>")
+    @Metadata(description = "The parameters for the SQL statement of executeStatement and batchExecuteStatement.",
+              javaType = "List<software.amazon.awssdk.services.redshiftdata.model.SqlParameter>")
     String SQL_PARAMETER_LIST = "CamelAwsRedshiftDataSqlParameterList";
 
     @Metadata(description = "The List of SQL statements text to run.", javaType = "List")
     String SQL_STATEMENT_LIST = "CamelAwsRedshiftDataSqlStatementList";
+
+    @Metadata(description = "The token of the page of results to return, from the nextToken of the response of the previous"
+                            + " call. Used by listDatabases, listSchemas, listStatements, listTables, describeTable and"
+                            + " getStatementResult.",
+              javaType = "String")
+    String NEXT_TOKEN = "CamelAwsRedshiftDataNextToken";
+
+    @Metadata(description = "The number of seconds that executeStatement, batchExecuteStatement and getStatementResult wait for"
+                            + " the statement to finish before they return.",
+              javaType = "Integer")
+    String WAIT_TIME_SECONDS = "CamelAwsRedshiftDataWaitTimeSeconds";
+
+    @Metadata(description = "How batchExecuteStatement runs the statements: in one transaction (TRANSACTION) or each statement"
+                            + " committed on its own (AUTO_COMMIT).",
+              javaType = "String")
+    String EXECUTION_MODE = "CamelAwsRedshiftDataExecutionMode";
+
+    @Metadata(description = "The format of the result of executeStatement and batchExecuteStatement: JSON or CSV.",
+              javaType = "String")
+    String RESULT_FORMAT = "CamelAwsRedshiftDataResultFormat";
+
+    @Metadata(description = "The ID of the session that executeStatement and batchExecuteStatement run in, as a previous"
+                            + " response with CamelAwsRedshiftDataSessionKeepAliveSeconds returns it.",
+              javaType = "String")
+    String SESSION_ID = "CamelAwsRedshiftDataSessionId";
+
+    @Metadata(description = "The number of seconds that the session of executeStatement and batchExecuteStatement stays open"
+                            + " after the statement ends, so that a later statement can run in it.",
+              javaType = "Integer")
+    String SESSION_KEEP_ALIVE_SECONDS = "CamelAwsRedshiftDataSessionKeepAliveSeconds";
 
 }

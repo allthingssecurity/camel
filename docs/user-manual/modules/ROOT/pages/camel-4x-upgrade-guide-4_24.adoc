@@ -12187,6 +12187,22 @@ response now leaves out that header and logs it at DEBUG level, instead of faili
 the route has already run. Headers with a valid name are written as before. A route that needs such a value in the
 response must set it in a header with a valid name.
 
+=== camel-aws2-redshift - listStatements filters, batch parameters and new headers
+
+In header mode, `listStatements` now passes the `CamelAwsRedshiftDataClusterIdentifier`,
+`CamelAwsRedshiftDataWorkGroupName` and `CamelAwsRedshiftDataDatabase` headers to the request as filters, as the other
+operations do, and `batchExecuteStatement` now passes the `CamelAwsRedshiftDataSqlParameterList` header as the
+parameters of its statements. Before, these operations ignored those headers. Remove the headers before such a step
+if a route sets them for another step.
+
+The new `CamelAwsRedshiftDataNextToken` header asks the list operations, `describeTable` and `getStatementResult` for
+the next page (the `nextToken` of the previous response). New headers set the `WaitTimeSeconds`, `ResultFormat`,
+`SessionId` and `SessionKeepAliveSeconds` of `executeStatement` and `batchExecuteStatement`, the `ExecutionMode` of
+`batchExecuteStatement` and the `WaitTimeSeconds` of `getStatementResult`.
+
+An exchange without the `CamelAwsRedshiftDataOperation` header and without the `operation` option now fails with an
+`IllegalArgumentException` that says so, instead of a `NullPointerException`.
+
 === Kamelets - removed Kamelets
 
 The Kamelet catalog (camel-kamelets 4.24) removes Kamelets that could not work on Camel 4.23 or 4.24:

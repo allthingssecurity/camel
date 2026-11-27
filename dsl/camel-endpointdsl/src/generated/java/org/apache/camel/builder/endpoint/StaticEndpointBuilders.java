@@ -2074,7 +2074,7 @@ public class StaticEndpointBuilders {
      * 
      * Syntax: <code>aws2-redshift-data:label</code>
      * 
-     * Path parameter: label (required)
+     * Path parameter: label
      * Logical name
      * 
      * @param path label
@@ -2093,7 +2093,7 @@ public class StaticEndpointBuilders {
      * 
      * Syntax: <code>aws2-redshift-data:label</code>
      * 
-     * Path parameter: label (required)
+     * Path parameter: label
      * Logical name
      * 
      * @param componentName to use a custom component name for the endpoint

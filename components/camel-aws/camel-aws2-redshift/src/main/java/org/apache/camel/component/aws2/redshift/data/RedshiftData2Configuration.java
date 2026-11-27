@@ -29,10 +29,8 @@ import software.amazon.awssdk.services.redshiftdata.RedshiftDataClient;
 public class RedshiftData2Configuration implements Cloneable, AwsCommonConfiguration {
 
     @UriPath(description = "Logical name")
-    @Metadata(required = true)
     private String label;
     @UriParam
-    @Metadata(required = true)
     private RedshiftData2Operations operation;
     @UriParam(label = "security", security = "secret")
     private String accessKey;
