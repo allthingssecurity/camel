@@ -305,6 +305,10 @@ public class StepFunctions2Producer extends DefaultProducer {
                 int maxRes = exchange.getIn().getHeader(StepFunctions2Constants.STATE_MACHINES_MAX_RESULTS, Integer.class);
                 builder.maxResults(maxRes);
             }
+            String nextToken = exchange.getIn().getHeader(StepFunctions2Constants.NEXT_TOKEN, String.class);
+            if (ObjectHelper.isNotEmpty(nextToken)) {
+                builder.nextToken(nextToken);
+            }
 
             ListStateMachinesResponse result;
             try {
@@ -484,6 +488,10 @@ public class StepFunctions2Producer extends DefaultProducer {
             if (ObjectHelper.isNotEmpty(exchange.getIn().getHeader(StepFunctions2Constants.ACTIVITIES_MAX_RESULTS))) {
                 int maxRes = exchange.getIn().getHeader(StepFunctions2Constants.ACTIVITIES_MAX_RESULTS, Integer.class);
                 builder.maxResults(maxRes);
+            }
+            String nextToken = exchange.getIn().getHeader(StepFunctions2Constants.NEXT_TOKEN, String.class);
+            if (ObjectHelper.isNotEmpty(nextToken)) {
+                builder.nextToken(nextToken);
             }
 
             ListActivitiesResponse result;
@@ -724,6 +732,10 @@ public class StepFunctions2Producer extends DefaultProducer {
                 int maxRes = exchange.getIn().getHeader(StepFunctions2Constants.EXECUTIONS_MAX_RESULTS, Integer.class);
                 builder.maxResults(maxRes);
             }
+            String nextToken = exchange.getIn().getHeader(StepFunctions2Constants.NEXT_TOKEN, String.class);
+            if (ObjectHelper.isNotEmpty(nextToken)) {
+                builder.nextToken(nextToken);
+            }
 
             ListExecutionsResponse result;
             try {
@@ -763,6 +775,10 @@ public class StepFunctions2Producer extends DefaultProducer {
             if (ObjectHelper.isNotEmpty(exchange.getIn().getHeader(StepFunctions2Constants.EXECUTION_HISTORY_MAX_RESULTS))) {
                 int maxRes = exchange.getIn().getHeader(StepFunctions2Constants.EXECUTION_HISTORY_MAX_RESULTS, Integer.class);
                 builder.maxResults(maxRes);
+            }
+            String nextToken = exchange.getIn().getHeader(StepFunctions2Constants.NEXT_TOKEN, String.class);
+            if (ObjectHelper.isNotEmpty(nextToken)) {
+                builder.nextToken(nextToken);
             }
             if (ObjectHelper
                     .isNotEmpty(exchange.getIn().getHeader(StepFunctions2Constants.EXECUTION_HISTORY_INCLUDE_EXECUTION_DATA))) {

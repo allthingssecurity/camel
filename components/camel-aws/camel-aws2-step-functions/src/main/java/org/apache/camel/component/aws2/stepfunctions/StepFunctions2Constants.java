@@ -91,4 +91,12 @@ public interface StepFunctions2Constants {
     @Metadata(description = "The limit number of results while listing executions", javaType = "Integer")
     String EXECUTIONS_MAX_RESULTS = "CamelAwsStepFunctionsExecutionMaxResults";
 
+    @Metadata(label = "listStateMachines listActivities listExecutions getExecutionHistory",
+              description = "The token of the page to return: the nextToken of the response of the previous call of the same"
+                            + " operation. If not set, the first page is returned. The producer does not set this header"
+                            + " from the response, so read the nextToken of the response in the body, and remove this header"
+                            + " before calling another operation that reads it.",
+              javaType = "String")
+    String NEXT_TOKEN = "CamelAwsStepFunctionsNextToken";
+
 }

@@ -143,22 +143,6 @@ public interface Aws2StepFunctionsComponentBuilderFactory {
         }
     
         /**
-         * If using a profile credentials provider, this parameter will set the
-         * profile name.
-         * 
-         * The option is a: &lt;code&gt;java.lang.String&lt;/code&gt; type.
-         * 
-         * Group: producer
-         * 
-         * @param profileCredentialsName the value to set
-         * @return the dsl builder
-         */
-        default Aws2StepFunctionsComponentBuilder profileCredentialsName(java.lang.String profileCredentialsName) {
-            doSetProperty("profileCredentialsName", profileCredentialsName);
-            return this;
-        }
-    
-        /**
          * The region in which StepFunctions client needs to work. When using
          * this parameter, the configuration will expect the lowercase name of
          * the region (for example, ap-east-1) You'll need to use the name
@@ -207,43 +191,6 @@ public interface Aws2StepFunctionsComponentBuilderFactory {
          */
         default Aws2StepFunctionsComponentBuilder uriEndpointOverride(java.lang.String uriEndpointOverride) {
             doSetProperty("uriEndpointOverride", uriEndpointOverride);
-            return this;
-        }
-    
-        
-        /**
-         * Set whether the StepFunctions client should expect to load
-         * credentials through a default credentials provider or to expect
-         * static credentials to be passed in.
-         * 
-         * The option is a: &lt;code&gt;boolean&lt;/code&gt; type.
-         * 
-         * Default: false
-         * Group: producer
-         * 
-         * @param useDefaultCredentialsProvider the value to set
-         * @return the dsl builder
-         */
-        default Aws2StepFunctionsComponentBuilder useDefaultCredentialsProvider(boolean useDefaultCredentialsProvider) {
-            doSetProperty("useDefaultCredentialsProvider", useDefaultCredentialsProvider);
-            return this;
-        }
-    
-        
-        /**
-         * Set whether the StepFunctions client should expect to load
-         * credentials through a profile credentials provider.
-         * 
-         * The option is a: &lt;code&gt;boolean&lt;/code&gt; type.
-         * 
-         * Default: false
-         * Group: producer
-         * 
-         * @param useProfileCredentialsProvider the value to set
-         * @return the dsl builder
-         */
-        default Aws2StepFunctionsComponentBuilder useProfileCredentialsProvider(boolean useProfileCredentialsProvider) {
-            doSetProperty("useProfileCredentialsProvider", useProfileCredentialsProvider);
             return this;
         }
     
@@ -388,6 +335,22 @@ public interface Aws2StepFunctionsComponentBuilderFactory {
         }
     
         /**
+         * If using a profile credentials provider, this parameter will set the
+         * profile name.
+         * 
+         * The option is a: &lt;code&gt;java.lang.String&lt;/code&gt; type.
+         * 
+         * Group: security
+         * 
+         * @param profileCredentialsName the value to set
+         * @return the dsl builder
+         */
+        default Aws2StepFunctionsComponentBuilder profileCredentialsName(java.lang.String profileCredentialsName) {
+            doSetProperty("profileCredentialsName", profileCredentialsName);
+            return this;
+        }
+    
+        /**
          * Amazon AWS Secret Key.
          * 
          * The option is a: &lt;code&gt;java.lang.String&lt;/code&gt; type.
@@ -415,6 +378,43 @@ public interface Aws2StepFunctionsComponentBuilderFactory {
          */
         default Aws2StepFunctionsComponentBuilder sessionToken(java.lang.String sessionToken) {
             doSetProperty("sessionToken", sessionToken);
+            return this;
+        }
+    
+        
+        /**
+         * Set whether the StepFunctions client should expect to load
+         * credentials through a default credentials provider or to expect
+         * static credentials to be passed in.
+         * 
+         * The option is a: &lt;code&gt;boolean&lt;/code&gt; type.
+         * 
+         * Default: false
+         * Group: security
+         * 
+         * @param useDefaultCredentialsProvider the value to set
+         * @return the dsl builder
+         */
+        default Aws2StepFunctionsComponentBuilder useDefaultCredentialsProvider(boolean useDefaultCredentialsProvider) {
+            doSetProperty("useDefaultCredentialsProvider", useDefaultCredentialsProvider);
+            return this;
+        }
+    
+        
+        /**
+         * Set whether the StepFunctions client should expect to load
+         * credentials through a profile credentials provider.
+         * 
+         * The option is a: &lt;code&gt;boolean&lt;/code&gt; type.
+         * 
+         * Default: false
+         * Group: security
+         * 
+         * @param useProfileCredentialsProvider the value to set
+         * @return the dsl builder
+         */
+        default Aws2StepFunctionsComponentBuilder useProfileCredentialsProvider(boolean useProfileCredentialsProvider) {
+            doSetProperty("useProfileCredentialsProvider", useProfileCredentialsProvider);
             return this;
         }
     
@@ -462,12 +462,9 @@ public interface Aws2StepFunctionsComponentBuilderFactory {
             case "operation": getOrCreateConfiguration((StepFunctions2Component) component).setOperation((org.apache.camel.component.aws2.stepfunctions.StepFunctions2Operations) value); return true;
             case "overrideEndpoint": getOrCreateConfiguration((StepFunctions2Component) component).setOverrideEndpoint((boolean) value); return true;
             case "pojoRequest": getOrCreateConfiguration((StepFunctions2Component) component).setPojoRequest((boolean) value); return true;
-            case "profileCredentialsName": getOrCreateConfiguration((StepFunctions2Component) component).setProfileCredentialsName((java.lang.String) value); return true;
             case "region": getOrCreateConfiguration((StepFunctions2Component) component).setRegion((java.lang.String) value); return true;
             case "trustAllCertificates": getOrCreateConfiguration((StepFunctions2Component) component).setTrustAllCertificates((boolean) value); return true;
             case "uriEndpointOverride": getOrCreateConfiguration((StepFunctions2Component) component).setUriEndpointOverride((java.lang.String) value); return true;
-            case "useDefaultCredentialsProvider": getOrCreateConfiguration((StepFunctions2Component) component).setUseDefaultCredentialsProvider((boolean) value); return true;
-            case "useProfileCredentialsProvider": getOrCreateConfiguration((StepFunctions2Component) component).setUseProfileCredentialsProvider((boolean) value); return true;
             case "autowiredEnabled": ((StepFunctions2Component) component).setAutowiredEnabled((boolean) value); return true;
             case "awsSfnClient": getOrCreateConfiguration((StepFunctions2Component) component).setAwsSfnClient((software.amazon.awssdk.services.sfn.SfnClient) value); return true;
             case "healthCheckConsumerEnabled": ((StepFunctions2Component) component).setHealthCheckConsumerEnabled((boolean) value); return true;
@@ -476,8 +473,11 @@ public interface Aws2StepFunctionsComponentBuilderFactory {
             case "proxyPort": getOrCreateConfiguration((StepFunctions2Component) component).setProxyPort((java.lang.Integer) value); return true;
             case "proxyProtocol": getOrCreateConfiguration((StepFunctions2Component) component).setProxyProtocol((software.amazon.awssdk.core.Protocol) value); return true;
             case "accessKey": getOrCreateConfiguration((StepFunctions2Component) component).setAccessKey((java.lang.String) value); return true;
+            case "profileCredentialsName": getOrCreateConfiguration((StepFunctions2Component) component).setProfileCredentialsName((java.lang.String) value); return true;
             case "secretKey": getOrCreateConfiguration((StepFunctions2Component) component).setSecretKey((java.lang.String) value); return true;
             case "sessionToken": getOrCreateConfiguration((StepFunctions2Component) component).setSessionToken((java.lang.String) value); return true;
+            case "useDefaultCredentialsProvider": getOrCreateConfiguration((StepFunctions2Component) component).setUseDefaultCredentialsProvider((boolean) value); return true;
+            case "useProfileCredentialsProvider": getOrCreateConfiguration((StepFunctions2Component) component).setUseProfileCredentialsProvider((boolean) value); return true;
             case "useSessionCredentials": getOrCreateConfiguration((StepFunctions2Component) component).setUseSessionCredentials((boolean) value); return true;
             default: return false;
             }

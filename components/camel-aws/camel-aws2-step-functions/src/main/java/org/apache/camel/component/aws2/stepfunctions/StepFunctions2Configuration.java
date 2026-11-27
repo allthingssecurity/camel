@@ -32,7 +32,6 @@ public class StepFunctions2Configuration implements Cloneable, AwsCommonConfigur
     @Metadata(required = true)
     private String label;
     @UriParam
-    @Metadata(required = true)
     private StepFunctions2Operations operation;
     @UriParam(label = "security", security = "secret")
     private String accessKey;
@@ -60,13 +59,13 @@ public class StepFunctions2Configuration implements Cloneable, AwsCommonConfigur
     private boolean overrideEndpoint;
     @UriParam
     private String uriEndpointOverride;
-    @UriParam(defaultValue = "false")
+    @UriParam(label = "security", defaultValue = "false")
     private boolean useDefaultCredentialsProvider;
-    @UriParam(defaultValue = "false")
+    @UriParam(label = "security", defaultValue = "false")
     private boolean useProfileCredentialsProvider;
     @UriParam(label = "security")
     private boolean useSessionCredentials;
-    @UriParam
+    @UriParam(label = "security")
     private String profileCredentialsName;
 
     public SfnClient getAwsSfnClient() {

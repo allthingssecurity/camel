@@ -106,6 +106,11 @@ execution (`SUCCEEDED`, `FAILED` or `TIMED_OUT`), and, when the execution failed
 `CamelAwsStepFunctionsExecutionError` and `CamelAwsStepFunctionsExecutionCause` headers. The exchange does not fail
 when the execution did not succeed: check the status header.
 
+The listStateMachines, listActivities, listExecutions and getExecutionHistory operations return one page of results,
+the response of the AWS SDK, which has a `nextToken()` when there are more. To read the next page, set the
+`CamelAwsStepFunctionsNextToken` header to that token and call the operation again. The producer does not set this
+header from the response, so remove it before calling another of these operations.
+
 == Examples
 
 === Producer Examples

@@ -50,7 +50,6 @@ public interface StepFunctions2EndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.aws2.stepfunctions.StepFunctions2Operations</code> type.
          * 
-         * Required: true
          * Group: producer
          * 
          * @param operation the value to set
@@ -66,7 +65,6 @@ public interface StepFunctions2EndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.aws2.stepfunctions.StepFunctions2Operations</code> type.
          * 
-         * Required: true
          * Group: producer
          * 
          * @param operation the value to set
@@ -139,21 +137,6 @@ public interface StepFunctions2EndpointBuilderFactory {
             return this;
         }
         /**
-         * If using a profile credentials provider, this parameter will set the
-         * profile name.
-         * 
-         * The option is a: <code>java.lang.String</code> type.
-         * 
-         * Group: producer
-         * 
-         * @param profileCredentialsName the value to set
-         * @return the dsl builder
-         */
-        default StepFunctions2EndpointBuilder profileCredentialsName(String profileCredentialsName) {
-            doSetProperty("profileCredentialsName", profileCredentialsName);
-            return this;
-        }
-        /**
          * The region in which StepFunctions client needs to work. When using
          * this parameter, the configuration will expect the lowercase name of
          * the region (for example, ap-east-1) You'll need to use the name
@@ -215,72 +198,6 @@ public interface StepFunctions2EndpointBuilderFactory {
          */
         default StepFunctions2EndpointBuilder uriEndpointOverride(String uriEndpointOverride) {
             doSetProperty("uriEndpointOverride", uriEndpointOverride);
-            return this;
-        }
-        /**
-         * Set whether the StepFunctions client should expect to load
-         * credentials through a default credentials provider or to expect
-         * static credentials to be passed in.
-         * 
-         * The option is a: <code>boolean</code> type.
-         * 
-         * Default: false
-         * Group: producer
-         * 
-         * @param useDefaultCredentialsProvider the value to set
-         * @return the dsl builder
-         */
-        default StepFunctions2EndpointBuilder useDefaultCredentialsProvider(boolean useDefaultCredentialsProvider) {
-            doSetProperty("useDefaultCredentialsProvider", useDefaultCredentialsProvider);
-            return this;
-        }
-        /**
-         * Set whether the StepFunctions client should expect to load
-         * credentials through a default credentials provider or to expect
-         * static credentials to be passed in.
-         * 
-         * The option will be converted to a <code>boolean</code> type.
-         * 
-         * Default: false
-         * Group: producer
-         * 
-         * @param useDefaultCredentialsProvider the value to set
-         * @return the dsl builder
-         */
-        default StepFunctions2EndpointBuilder useDefaultCredentialsProvider(String useDefaultCredentialsProvider) {
-            doSetProperty("useDefaultCredentialsProvider", useDefaultCredentialsProvider);
-            return this;
-        }
-        /**
-         * Set whether the StepFunctions client should expect to load
-         * credentials through a profile credentials provider.
-         * 
-         * The option is a: <code>boolean</code> type.
-         * 
-         * Default: false
-         * Group: producer
-         * 
-         * @param useProfileCredentialsProvider the value to set
-         * @return the dsl builder
-         */
-        default StepFunctions2EndpointBuilder useProfileCredentialsProvider(boolean useProfileCredentialsProvider) {
-            doSetProperty("useProfileCredentialsProvider", useProfileCredentialsProvider);
-            return this;
-        }
-        /**
-         * Set whether the StepFunctions client should expect to load
-         * credentials through a profile credentials provider.
-         * 
-         * The option will be converted to a <code>boolean</code> type.
-         * 
-         * Default: false
-         * Group: producer
-         * 
-         * @param useProfileCredentialsProvider the value to set
-         * @return the dsl builder
-         */
-        default StepFunctions2EndpointBuilder useProfileCredentialsProvider(String useProfileCredentialsProvider) {
-            doSetProperty("useProfileCredentialsProvider", useProfileCredentialsProvider);
             return this;
         }
         /**
@@ -375,6 +292,21 @@ public interface StepFunctions2EndpointBuilderFactory {
             return this;
         }
         /**
+         * If using a profile credentials provider, this parameter will set the
+         * profile name.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Group: security
+         * 
+         * @param profileCredentialsName the value to set
+         * @return the dsl builder
+         */
+        default StepFunctions2EndpointBuilder profileCredentialsName(String profileCredentialsName) {
+            doSetProperty("profileCredentialsName", profileCredentialsName);
+            return this;
+        }
+        /**
          * Amazon AWS Secret Key.
          * 
          * The option is a: <code>java.lang.String</code> type.
@@ -401,6 +333,72 @@ public interface StepFunctions2EndpointBuilderFactory {
          */
         default StepFunctions2EndpointBuilder sessionToken(String sessionToken) {
             doSetProperty("sessionToken", sessionToken);
+            return this;
+        }
+        /**
+         * Set whether the StepFunctions client should expect to load
+         * credentials through a default credentials provider or to expect
+         * static credentials to be passed in.
+         * 
+         * The option is a: <code>boolean</code> type.
+         * 
+         * Default: false
+         * Group: security
+         * 
+         * @param useDefaultCredentialsProvider the value to set
+         * @return the dsl builder
+         */
+        default StepFunctions2EndpointBuilder useDefaultCredentialsProvider(boolean useDefaultCredentialsProvider) {
+            doSetProperty("useDefaultCredentialsProvider", useDefaultCredentialsProvider);
+            return this;
+        }
+        /**
+         * Set whether the StepFunctions client should expect to load
+         * credentials through a default credentials provider or to expect
+         * static credentials to be passed in.
+         * 
+         * The option will be converted to a <code>boolean</code> type.
+         * 
+         * Default: false
+         * Group: security
+         * 
+         * @param useDefaultCredentialsProvider the value to set
+         * @return the dsl builder
+         */
+        default StepFunctions2EndpointBuilder useDefaultCredentialsProvider(String useDefaultCredentialsProvider) {
+            doSetProperty("useDefaultCredentialsProvider", useDefaultCredentialsProvider);
+            return this;
+        }
+        /**
+         * Set whether the StepFunctions client should expect to load
+         * credentials through a profile credentials provider.
+         * 
+         * The option is a: <code>boolean</code> type.
+         * 
+         * Default: false
+         * Group: security
+         * 
+         * @param useProfileCredentialsProvider the value to set
+         * @return the dsl builder
+         */
+        default StepFunctions2EndpointBuilder useProfileCredentialsProvider(boolean useProfileCredentialsProvider) {
+            doSetProperty("useProfileCredentialsProvider", useProfileCredentialsProvider);
+            return this;
+        }
+        /**
+         * Set whether the StepFunctions client should expect to load
+         * credentials through a profile credentials provider.
+         * 
+         * The option will be converted to a <code>boolean</code> type.
+         * 
+         * Default: false
+         * Group: security
+         * 
+         * @param useProfileCredentialsProvider the value to set
+         * @return the dsl builder
+         */
+        default StepFunctions2EndpointBuilder useProfileCredentialsProvider(String useProfileCredentialsProvider) {
+            doSetProperty("useProfileCredentialsProvider", useProfileCredentialsProvider);
             return this;
         }
         /**
@@ -865,6 +863,23 @@ public interface StepFunctions2EndpointBuilderFactory {
          */
         public String awsStepFunctionsExecutionMaxResults() {
             return "CamelAwsStepFunctionsExecutionMaxResults";
+        }
+        /**
+         * The token of the page to return: the nextToken of the response of the
+         * previous call of the same operation. If not set, the first page is
+         * returned. The producer does not set this header from the response, so
+         * read the nextToken of the response in the body, and remove this
+         * header before calling another operation that reads it.
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: listStateMachines listActivities listExecutions
+         * getExecutionHistory
+         * 
+         * @return the name of the header {@code AwsStepFunctionsNextToken}.
+         */
+        public String awsStepFunctionsNextToken() {
+            return "CamelAwsStepFunctionsNextToken";
         }
     }
     static StepFunctions2EndpointBuilder endpointBuilder(String componentName, String path) {
