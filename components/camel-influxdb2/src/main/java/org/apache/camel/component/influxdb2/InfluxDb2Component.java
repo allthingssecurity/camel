@@ -28,7 +28,7 @@ import org.apache.camel.support.DefaultComponent;
 @Component("influxdb2")
 public class InfluxDb2Component extends DefaultComponent {
 
-    @Metadata(autowired = true)
+    @Metadata(autowired = true, displayName = "InfluxDB Client")
     private InfluxDBClient influxDBClient;
 
     public InfluxDb2Component() {

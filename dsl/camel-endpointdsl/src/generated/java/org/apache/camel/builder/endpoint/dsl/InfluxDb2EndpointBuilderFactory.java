@@ -107,11 +107,13 @@ public interface InfluxDb2EndpointBuilderFactory {
             return this;
         }
         /**
-         * The name of the bucket where the time series will be stored.
+         * The name of the bucket where the time series will be stored. Needed
+         * for INSERT: with autoCreateBucket, the endpoint fails to start
+         * without it. When autoCreateBucket is false, the CamelInfluxDB2Bucket
+         * header can name it instead. Not used by PING.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
-         * Required: true
          * Group: producer
          * 
          * @param bucket the value to set
@@ -157,10 +159,13 @@ public interface InfluxDb2EndpointBuilderFactory {
         }
         /**
          * The name of the organization where the time series will be stored.
+         * Needed for INSERT: with autoCreateOrg, or with autoCreateBucket and a
+         * bucket that does not exist yet, the endpoint fails to start without
+         * it. When autoCreateOrg and autoCreateBucket are false, the
+         * CamelInfluxDB2Org header can name it instead. Not used by PING.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
-         * Required: true
          * Group: producer
          * 
          * @param org the value to set
