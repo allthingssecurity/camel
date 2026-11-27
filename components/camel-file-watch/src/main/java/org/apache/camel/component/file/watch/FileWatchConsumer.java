@@ -18,10 +18,14 @@ package org.apache.camel.component.file.watch;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -31,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import io.methvin.watcher.DirectoryChangeEvent;
 import io.methvin.watcher.DirectoryChangeListener;
 import io.methvin.watcher.DirectoryWatcher;
+import io.methvin.watcher.visitor.FileTreeVisitor;
 import org.apache.camel.Exchange;
 import org.apache.camel.Message;
 import org.apache.camel.Processor;
@@ -75,8 +80,18 @@ public class FileWatchConsumer extends DefaultConsumer {
         super.doInit();
 
         for (String event : getEndpoint().getEvents().split(",")) {
-            FileEventEnum fe = FileEventEnum.valueOf(event);
-            events.add(fe);
+            String name = event.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            try {
+                events.add(FileEventEnum.valueOf(name.toUpperCase(Locale.ROOT)));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Unknown event '" + name + "' in the events option, the accepted values are "
+                                                   + Arrays.toString(FileEventEnum.values()),
+                        e);
+            }
         }
     }
 
@@ -110,6 +125,11 @@ public class FileWatchConsumer extends DefaultConsumer {
             // We need per FileSystem WatchService, to allow monitoring on machine with multiple file systems.
             // Keep default for macOS
             watcherBuilder.watchService(this.baseDirectory.getFileSystem().newWatchService());
+        }
+
+        if (!getEndpoint().isRecursive()) {
+            // only the base directory is watched (and its files hashed), not the whole tree below it
+            watcherBuilder.fileTreeVisitor(new BaseDirectoryVisitor(baseDirectory));
         }
 
         watcherBuilder.fileHashing(getEndpoint().isUseFileHashing());
@@ -180,7 +200,7 @@ public class FileWatchConsumer extends DefaultConsumer {
         if (lastModified != null) {
             message.setHeader(FileWatchConstants.FILE_LAST_MODIFIED, lastModified);
         }
-        message.setHeader(Exchange.MESSAGE_TIMESTAMP, event.getEventDate());
+        message.setHeader(FileWatchConstants.MESSAGE_TIMESTAMP, event.getEventDate());
 
         return exchange;
     }
@@ -251,6 +271,34 @@ public class FileWatchConsumer extends DefaultConsumer {
                     fileEvent.getEventType(), fileEvent.getEventPath());
         }
         return false;
+    }
+
+    /**
+     * Visits only the base directory and the files directly in it, so that a non-recursive watch does not register (and
+     * hash) the subdirectories, also not one created later. The events from a subdirectory that a platform reports
+     * anyway (the WatchService of macOS is always recursive) are dropped by {@link #matchFilters(FileEvent)}.
+     */
+    static final class BaseDirectoryVisitor implements FileTreeVisitor {
+        private final Path baseDirectory;
+
+        BaseDirectoryVisitor(Path baseDirectory) {
+            this.baseDirectory = baseDirectory;
+        }
+
+        @Override
+        public void recursiveVisitFiles(Path file, Callback onDirectory, Callback onFile) throws IOException {
+            if (!Files.isSameFile(file, baseDirectory)) {
+                return;
+            }
+            onDirectory.call(file);
+            try (DirectoryStream<Path> entries = Files.newDirectoryStream(file)) {
+                for (Path entry : entries) {
+                    if (Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
+                        onFile.call(entry);
+                    }
+                }
+            }
+        }
     }
 
     class FileWatchDirectoryChangeListener implements DirectoryChangeListener {
