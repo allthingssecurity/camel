@@ -152,6 +152,39 @@ public interface XChangeEndpointBuilderFactory {
             doSetProperty("service", service);
             return this;
         }
+        /**
+         * The API key of the account at the exchange, for the account service.
+         * If not set, the exchange module of XChange decides, for example the
+         * one of Binance reads it from the file binance-secret.keys.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Group: security
+         * 
+         * @param apiKey the value to set
+         * @return the dsl builder
+         */
+        default XChangeEndpointBuilder apiKey(String apiKey) {
+            doSetProperty("apiKey", apiKey);
+            return this;
+        }
+        /**
+         * The secret key of the account at the exchange, for the account
+         * service. If not set, the exchange module of XChange decides, for
+         * example the one of Binance reads it from the file
+         * binance-secret.keys.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Group: security
+         * 
+         * @param secretKey the value to set
+         * @return the dsl builder
+         */
+        default XChangeEndpointBuilder secretKey(String secretKey) {
+            doSetProperty("secretKey", secretKey);
+            return this;
+        }
     }
 
     /**
