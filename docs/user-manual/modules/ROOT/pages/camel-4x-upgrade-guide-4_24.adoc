@@ -12193,8 +12193,8 @@ An `lpr` endpoint now fails to be created when the `flavor` or the `mimeType` op
 know, or when the two together name no doc flavor, such as the default `flavor` `DocFlavor.BYTE_ARRAY` with
 `mimeType=TEXT_PLAIN` (`TEXT_PLAIN` and `TEXT_HTML` need `DocFlavor.CHAR_ARRAY`, `DocFlavor.READER` or
 `DocFlavor.STRING`). Before, such an endpoint printed with the doc flavor `DocFlavor.BYTE_ARRAY.AUTOSENSE` without an
-error. Use a `mimeType` with a charset, such as `TEXT_PLAIN_UTF_8`, or set `mimeType=AUTOSENSE` to keep printing as
-before.
+error. Use a `mimeType` with a charset, such as `TEXT_PLAIN_UTF_8`, or remove the `flavor` and `mimeType` options to keep
+printing as before.
 
 `mimeType=TEXT_HTML_UTF_8` and `mimeType=TEXT_HTML` now select the `text/html` doc flavor; they selected the
 `text/plain` doc flavor before.
