@@ -35,7 +35,7 @@ public interface HwcloudImagerecognitionComponentBuilderFactory {
      * Huawei Cloud Image Recognition (camel-huaweicloud-imagerecognition)
      * To identify objects, scenes, and concepts in images on Huawei Cloud
      * 
-     * Category: cloud,messaging
+     * Category: cloud,ai
      * Since: 3.12
      * Maven coordinates: org.apache.camel:camel-huaweicloud-imagerecognition
      * 

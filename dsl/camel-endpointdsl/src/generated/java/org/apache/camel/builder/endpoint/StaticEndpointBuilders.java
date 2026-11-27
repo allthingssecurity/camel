@@ -8312,7 +8312,7 @@ public class StaticEndpointBuilders {
      * Huawei Cloud Image Recognition (camel-huaweicloud-imagerecognition)
      * To identify objects, scenes, and concepts in images on Huawei Cloud
      * 
-     * Category: cloud,messaging
+     * Category: cloud,ai
      * Since: 3.12
      * Maven coordinates: org.apache.camel:camel-huaweicloud-imagerecognition
      * 
@@ -8321,6 +8321,8 @@ public class StaticEndpointBuilders {
      * Path parameter: operation (required)
      * Name of Image Recognition operation to perform, including
      * celebrityRecognition and tagRecognition
+     * There are 2 enums and the value can be one of: celebrityRecognition,
+     * tagRecognition
      * 
      * @param path operation
      * @return the dsl builder
@@ -8332,7 +8334,7 @@ public class StaticEndpointBuilders {
      * Huawei Cloud Image Recognition (camel-huaweicloud-imagerecognition)
      * To identify objects, scenes, and concepts in images on Huawei Cloud
      * 
-     * Category: cloud,messaging
+     * Category: cloud,ai
      * Since: 3.12
      * Maven coordinates: org.apache.camel:camel-huaweicloud-imagerecognition
      * 
@@ -8341,6 +8343,8 @@ public class StaticEndpointBuilders {
      * Path parameter: operation (required)
      * Name of Image Recognition operation to perform, including
      * celebrityRecognition and tagRecognition
+     * There are 2 enums and the value can be one of: celebrityRecognition,
+     * tagRecognition
      * 
      * @param componentName to use a custom component name for the endpoint
      * instead of the default name

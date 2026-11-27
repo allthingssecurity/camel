@@ -63,7 +63,7 @@ When using imageContent option, we suggest you use RAW(image_base64_value) to av
 
 |`CamelHwCloudImageTagLanguage` |`String` |The language of the returned tags when the operation is tagRecognition
 
-|`CamelHwCloudImageThreshold` |`Integer` |The threshold of confidence.
+|`CamelHwCloudImageThreshold` |`Float` |The threshold of confidence.
 
 |=======================================================================
 

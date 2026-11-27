@@ -37,7 +37,7 @@ import org.apache.camel.support.DefaultEndpoint;
  */
 @UriEndpoint(firstVersion = "3.12.0", scheme = "hwcloud-imagerecognition", title = "Huawei Cloud Image Recognition",
              syntax = "hwcloud-imagerecognition:operation",
-             category = { Category.CLOUD, Category.MESSAGING }, producerOnly = true)
+             category = { Category.CLOUD, Category.AI }, producerOnly = true)
 @BodyTypes(producerIn = @BodyType(value = Carrier.ANY,
                                   description = "Not used, not even for the image: the image comes from the imageContent option"
                                                 + " or the CamelHwCloudImageContent exchange property as base64, or from the"
@@ -56,7 +56,7 @@ import org.apache.camel.support.DefaultEndpoint;
 public class ImageRecognitionEndpoint extends DefaultEndpoint {
     @UriPath(
              description = "Name of Image Recognition operation to perform, including celebrityRecognition and tagRecognition",
-             displayName = "Operation name", label = "producer")
+             displayName = "Operation name", label = "producer", enums = "celebrityRecognition,tagRecognition")
     @Metadata(required = true)
     private String operation;
 
@@ -66,11 +66,11 @@ public class ImageRecognitionEndpoint extends DefaultEndpoint {
     private ServiceKeys serviceKeys;
 
     @UriParam(description = "Access key for the cloud user", displayName = "Account access key (AK)", security = "secret")
-    @Metadata(required = true)
+    @Metadata(required = false)
     private String accessKey;
 
     @UriParam(description = "Secret key for the cloud user", displayName = "Account secret key (SK)", security = "secret")
-    @Metadata(required = true)
+    @Metadata(required = false)
     private String secretKey;
 
     @UriParam(description = "Cloud project ID", displayName = "Project ID")
@@ -101,7 +101,7 @@ public class ImageRecognitionEndpoint extends DefaultEndpoint {
     @UriParam(
               description = "Image Recognition service region. Currently only cn-north-1 and cn-north-4 are supported. This is lower precedence than endpoint based configuration.",
               displayName = "Service region")
-    @Metadata(required = true)
+    @Metadata(required = false)
     private String region;
 
     @UriParam(
@@ -129,7 +129,7 @@ public class ImageRecognitionEndpoint extends DefaultEndpoint {
 
     @UriParam(
               description = "Indicates the language of the returned tags when the operation is tagRecognition, including zh and en.",
-              displayName = "Tag Language", defaultValue = "zh")
+              displayName = "Tag Language", defaultValue = "zh", enums = "zh,en")
     @Metadata(required = false)
     private String tagLanguage = ImageRecognitionConstants.TAG_LANGUAGE_ZH;
 

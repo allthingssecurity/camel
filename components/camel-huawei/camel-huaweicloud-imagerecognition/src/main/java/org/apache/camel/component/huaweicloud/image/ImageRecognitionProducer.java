@@ -75,19 +75,20 @@ public class ImageRecognitionProducer extends DefaultProducer {
     }
 
     /**
-     * initialize image client. this is lazily initialized on the first message
+     * initialize image client. this is lazily initialized on the first message. The credentials, project ID, endpoint
+     * and proxy options are only read when the client is created here, not when an ImageClient was set on the endpoint.
      *
      * @param  endpoint
-     * @param  clientConfigurations
      * @return
      */
-    private ImageClient initializeSdkClient(ImageRecognitionEndpoint endpoint, ClientConfigurations clientConfigurations) {
+    private ImageClient initializeSdkClient(ImageRecognitionEndpoint endpoint) {
         if (endpoint.getImageClient() != null) {
             LOG.info(
                     "Instance of ImageClient was set on the endpoint. Skipping creation of ImageClient from endpoint parameters");
             this.imageClient = endpoint.getImageClient();
             return endpoint.getImageClient();
         }
+        ClientConfigurations clientConfigurations = initializeConfigurations(endpoint);
         HttpConfig httpConfig
                 = HttpConfig.getDefaultHttpConfig().withIgnoreSSLVerification(clientConfigurations.isIgnoreSslVerification());
         if (!StringUtils.isEmpty(clientConfigurations.getProxyHost())) {
@@ -117,11 +118,12 @@ public class ImageRecognitionProducer extends DefaultProducer {
 
     public void process(Exchange exchange) {
 
-        ClientConfigurations clientConfigurations = initializeConfigurations(endpoint);
-
         if (imageClient == null) {
-            initializeSdkClient(endpoint, clientConfigurations);
+            initializeSdkClient(endpoint);
         }
+
+        // only the values of the message (image, threshold, tag language and limit) are set per exchange
+        ClientConfigurations clientConfigurations = new ClientConfigurations();
 
         String operation = ((ImageRecognitionEndpoint) super.getEndpoint()).getOperation();
         if (StringUtils.isEmpty(operation)) {
