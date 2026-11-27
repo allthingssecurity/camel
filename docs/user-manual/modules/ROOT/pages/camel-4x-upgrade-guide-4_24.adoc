@@ -12187,6 +12187,18 @@ response now leaves out that header and logs it at DEBUG level, instead of faili
 the route has already run. Headers with a valid name are written as before. A route that needs such a value in the
 response must set it in a header with a valid name.
 
+=== camel-bonita - exact process name, and processName, username and password checked at startup
+
+The `startCase` producer now looks up the process with the exact name of `processName` (the `f=name=...` filter of the
+Bonita REST API) instead of searching for it and taking the first result, so a process whose name only contains the
+given name is no longer used. When the process is deployed in several versions, the new `processVersion` option
+selects one; without it the first version that Bonita returns is used, as before, and a WARN is logged.
+
+A route with a `bonita` endpoint without `processName`, `username` or `password` now fails to start, instead of failing
+every exchange. The context path of the Bonita server can be set with the new `basePath` option (default `/bonita`).
+
+`BonitaConfiguration.setParameters(Map)` is deprecated. Camel does not call it; use the setters.
+
 === Kamelets - removed Kamelets
 
 The Kamelet catalog (camel-kamelets 4.24) removes Kamelets that could not work on Camel 4.23 or 4.24:
