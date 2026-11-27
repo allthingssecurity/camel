@@ -16757,9 +16757,11 @@ public class StaticEndpointBuilders {
      * 
      * Path parameter: host (required)
      * The host where Redis server is running.
+     * Default value: localhost
      * 
      * Path parameter: port (required)
      * Redis server port number
+     * Default value: 6379
      * 
      * @param path host:port
      * @return the dsl builder
@@ -16779,9 +16781,11 @@ public class StaticEndpointBuilders {
      * 
      * Path parameter: host (required)
      * The host where Redis server is running.
+     * Default value: localhost
      * 
      * Path parameter: port (required)
      * Redis server port number
+     * Default value: 6379
      * 
      * @param componentName to use a custom component name for the endpoint
      * instead of the default name

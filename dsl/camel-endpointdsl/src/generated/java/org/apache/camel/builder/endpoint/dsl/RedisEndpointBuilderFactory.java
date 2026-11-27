@@ -44,21 +44,6 @@ public interface RedisEndpointBuilderFactory {
             return (AdvancedRedisEndpointConsumerBuilder) this;
         }
         /**
-         * List of topic names or name patterns to subscribe to. Multiple names
-         * can be separated by comma.
-         * 
-         * The option is a: <code>java.lang.String</code> type.
-         * 
-         * Group: common
-         * 
-         * @param channels the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointConsumerBuilder channels(String channels) {
-            doSetProperty("channels", channels);
-            return this;
-        }
-        /**
          * Default command, which can be overridden by message header. Notice
          * the consumer only supports the following commands: PSUBSCRIBE and
          * SUBSCRIBE.
@@ -125,36 +110,6 @@ public interface RedisEndpointBuilderFactory {
             return this;
         }
         /**
-         * Reference to a pre-configured RedisTemplate instance to use.
-         * 
-         * The option is a:
-         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
-         * 
-         * Group: common
-         * 
-         * @param redisTemplate the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointConsumerBuilder redisTemplate(org.springframework.data.redis.core.RedisTemplate<java.lang.Object, java.lang.Object> redisTemplate) {
-            doSetProperty("redisTemplate", redisTemplate);
-            return this;
-        }
-        /**
-         * Reference to a pre-configured RedisTemplate instance to use.
-         * 
-         * The option will be converted to a
-         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
-         * 
-         * Group: common
-         * 
-         * @param redisTemplate the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointConsumerBuilder redisTemplate(String redisTemplate) {
-            doSetProperty("redisTemplate", redisTemplate);
-            return this;
-        }
-        /**
          * Reference to a pre-configured RedisSerializer instance to use.
          * 
          * The option is a:
@@ -182,6 +137,21 @@ public interface RedisEndpointBuilderFactory {
          */
         default RedisEndpointConsumerBuilder serializer(String serializer) {
             doSetProperty("serializer", serializer);
+            return this;
+        }
+        /**
+         * List of topic names or name patterns to subscribe to. Multiple names
+         * can be separated by comma.
+         * 
+         * The option is a: <code>java.lang.String</code> type.
+         * 
+         * Group: consumer
+         * 
+         * @param channels the value to set
+         * @return the dsl builder
+         */
+        default RedisEndpointConsumerBuilder channels(String channels) {
+            doSetProperty("channels", channels);
             return this;
         }
     }
@@ -377,21 +347,6 @@ public interface RedisEndpointBuilderFactory {
         }
 
         /**
-         * List of topic names or name patterns to subscribe to. Multiple names
-         * can be separated by comma.
-         * 
-         * The option is a: <code>java.lang.String</code> type.
-         * 
-         * Group: common
-         * 
-         * @param channels the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointProducerBuilder channels(String channels) {
-            doSetProperty("channels", channels);
-            return this;
-        }
-        /**
          * Default command, which can be overridden by message header. Notice
          * the consumer only supports the following commands: PSUBSCRIBE and
          * SUBSCRIBE.
@@ -458,36 +413,6 @@ public interface RedisEndpointBuilderFactory {
             return this;
         }
         /**
-         * Reference to a pre-configured RedisTemplate instance to use.
-         * 
-         * The option is a:
-         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
-         * 
-         * Group: common
-         * 
-         * @param redisTemplate the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointProducerBuilder redisTemplate(org.springframework.data.redis.core.RedisTemplate<java.lang.Object, java.lang.Object> redisTemplate) {
-            doSetProperty("redisTemplate", redisTemplate);
-            return this;
-        }
-        /**
-         * Reference to a pre-configured RedisTemplate instance to use.
-         * 
-         * The option will be converted to a
-         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
-         * 
-         * Group: common
-         * 
-         * @param redisTemplate the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointProducerBuilder redisTemplate(String redisTemplate) {
-            doSetProperty("redisTemplate", redisTemplate);
-            return this;
-        }
-        /**
          * Reference to a pre-configured RedisSerializer instance to use.
          * 
          * The option is a:
@@ -515,6 +440,36 @@ public interface RedisEndpointBuilderFactory {
          */
         default RedisEndpointProducerBuilder serializer(String serializer) {
             doSetProperty("serializer", serializer);
+            return this;
+        }
+        /**
+         * Reference to a pre-configured RedisTemplate instance to use.
+         * 
+         * The option is a:
+         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
+         * 
+         * Group: producer
+         * 
+         * @param redisTemplate the value to set
+         * @return the dsl builder
+         */
+        default RedisEndpointProducerBuilder redisTemplate(org.springframework.data.redis.core.RedisTemplate<java.lang.Object, java.lang.Object> redisTemplate) {
+            doSetProperty("redisTemplate", redisTemplate);
+            return this;
+        }
+        /**
+         * Reference to a pre-configured RedisTemplate instance to use.
+         * 
+         * The option will be converted to a
+         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
+         * 
+         * Group: producer
+         * 
+         * @param redisTemplate the value to set
+         * @return the dsl builder
+         */
+        default RedisEndpointProducerBuilder redisTemplate(String redisTemplate) {
+            doSetProperty("redisTemplate", redisTemplate);
             return this;
         }
     }
@@ -607,21 +562,6 @@ public interface RedisEndpointBuilderFactory {
         }
 
         /**
-         * List of topic names or name patterns to subscribe to. Multiple names
-         * can be separated by comma.
-         * 
-         * The option is a: <code>java.lang.String</code> type.
-         * 
-         * Group: common
-         * 
-         * @param channels the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointBuilder channels(String channels) {
-            doSetProperty("channels", channels);
-            return this;
-        }
-        /**
          * Default command, which can be overridden by message header. Notice
          * the consumer only supports the following commands: PSUBSCRIBE and
          * SUBSCRIBE.
@@ -685,36 +625,6 @@ public interface RedisEndpointBuilderFactory {
          */
         default RedisEndpointBuilder connectionFactory(String connectionFactory) {
             doSetProperty("connectionFactory", connectionFactory);
-            return this;
-        }
-        /**
-         * Reference to a pre-configured RedisTemplate instance to use.
-         * 
-         * The option is a:
-         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
-         * 
-         * Group: common
-         * 
-         * @param redisTemplate the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointBuilder redisTemplate(org.springframework.data.redis.core.RedisTemplate<java.lang.Object, java.lang.Object> redisTemplate) {
-            doSetProperty("redisTemplate", redisTemplate);
-            return this;
-        }
-        /**
-         * Reference to a pre-configured RedisTemplate instance to use.
-         * 
-         * The option will be converted to a
-         * <code>org.springframework.data.redis.core.RedisTemplate&lt;java.lang.Object, java.lang.Object&gt;</code> type.
-         * 
-         * Group: common
-         * 
-         * @param redisTemplate the value to set
-         * @return the dsl builder
-         */
-        default RedisEndpointBuilder redisTemplate(String redisTemplate) {
-            doSetProperty("redisTemplate", redisTemplate);
             return this;
         }
         /**
@@ -808,9 +718,11 @@ public interface RedisEndpointBuilderFactory {
          * 
          * Path parameter: host (required)
          * The host where Redis server is running.
+         * Default value: localhost
          * 
          * Path parameter: port (required)
          * Redis server port number
+         * Default value: 6379
          * 
          * @param path host:port
          * @return the dsl builder
@@ -830,9 +742,11 @@ public interface RedisEndpointBuilderFactory {
          * 
          * Path parameter: host (required)
          * The host where Redis server is running.
+         * Default value: localhost
          * 
          * Path parameter: port (required)
          * Redis server port number
+         * Default value: 6379
          * 
          * @param componentName to use a custom component name for the endpoint
          * instead of the default name
@@ -871,7 +785,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Key}.
          */
@@ -884,7 +798,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Collection<String> or String} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Keys}.
          */
@@ -896,7 +810,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Field}.
          */
@@ -908,7 +822,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Collection<String>} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Fields}.
          */
@@ -920,7 +834,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Object} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Value}.
          */
@@ -933,7 +847,7 @@ public interface RedisEndpointBuilderFactory {
          * The option is a: {@code Map<String, Object> or Collection<Object>}
          * type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Values}.
          */
@@ -945,7 +859,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Start}.
          */
@@ -957,7 +871,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.End}.
          */
@@ -969,7 +883,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Timeout}.
          */
@@ -981,7 +895,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Offset}.
          */
@@ -993,7 +907,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Destination}.
          */
@@ -1003,7 +917,7 @@ public interface RedisEndpointBuilderFactory {
         /**
          * The channel.
          * 
-         * The option is a: {@code byte[] or String} type.
+         * The option is a: {@code String} type.
          * 
          * Group: common
          * 
@@ -1017,7 +931,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Object} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Message}.
          */
@@ -1029,7 +943,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Index}.
          */
@@ -1041,7 +955,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Position}.
          */
@@ -1053,7 +967,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code String} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Pivot}.
          */
@@ -1065,7 +979,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Count}.
          */
@@ -1077,7 +991,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Long} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Timestamp}.
          */
@@ -1101,7 +1015,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Integer} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Db}.
          */
@@ -1113,7 +1027,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Score}.
          */
@@ -1125,7 +1039,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Min}.
          */
@@ -1137,7 +1051,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Max}.
          */
@@ -1149,7 +1063,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Increment}.
          */
@@ -1161,7 +1075,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Boolean} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.WithScore}.
          */
@@ -1173,7 +1087,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Latitude}.
          */
@@ -1185,7 +1099,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Longitude}.
          */
@@ -1197,7 +1111,7 @@ public interface RedisEndpointBuilderFactory {
          * 
          * The option is a: {@code Double} type.
          * 
-         * Group: common
+         * Group: producer
          * 
          * @return the name of the header {@code Redis.Radius}.
          */

@@ -34,17 +34,17 @@ public class RedisConfiguration {
     private boolean managedListenerContainer;
     private boolean managedConnectionFactory;
 
-    @UriPath
+    @UriPath(defaultValue = "localhost")
     @Metadata(required = true)
     private String host;
-    @UriPath
+    @UriPath(defaultValue = "6379")
     @Metadata(required = true)
     private Integer port;
     @UriParam(defaultValue = "SET")
     private Command command = Command.SET;
-    @UriParam
+    @UriParam(label = "consumer")
     private String channels;
-    @UriParam
+    @UriParam(label = "producer")
     private RedisTemplate<?, ?> redisTemplate;
     @UriParam(label = "consumer,advanced")
     private RedisMessageListenerContainer listenerContainer;
