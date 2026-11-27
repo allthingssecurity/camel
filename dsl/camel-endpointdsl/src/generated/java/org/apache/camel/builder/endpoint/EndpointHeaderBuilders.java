@@ -805,6 +805,20 @@ public class EndpointHeaderBuilders {
         return Translate2EndpointBuilderFactory.Translate2HeaderNameBuilder.INSTANCE;
     }
     /**
+     * Azure CosmosDB (camel-azure-cosmosdb)
+     * To read and write records to the CosmosDB database on Azure cloud
+     * platform.
+     * 
+     * Category: cloud,database
+     * Since: 3.10
+     * Maven coordinates: org.apache.camel:camel-azure-cosmosdb
+     * 
+     * @return the dsl builder for the headers' name.
+     */
+    public static CosmosDbEndpointBuilderFactory.CosmosDbHeaderNameBuilder azureCosmosdb() {
+        return CosmosDbEndpointBuilderFactory.CosmosDbHeaderNameBuilder.INSTANCE;
+    }
+    /**
      * Azure Event Grid (camel-azure-eventgrid)
      * Send events to Azure Event Grid topics.
      * 

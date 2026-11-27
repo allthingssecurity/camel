@@ -42,18 +42,19 @@ public class CosmosDbConfiguration implements Cloneable {
     @Metadata(required = false)
     private String accountKey;
     @UriParam(label = "common")
-    @Metadata(required = true)
     private String databaseEndpoint;
     @UriParam(label = "common")
     private String containerPartitionKeyPath;
     @UriParam(label = "common")
     @Metadata(autowired = true)
     private CosmosAsyncClient cosmosAsyncClient;
-    @UriParam(label = "common", defaultValue = "SESSION")
+    @UriParam(label = "common", defaultValue = "Session")
     private ConsistencyLevel consistencyLevel = ConsistencyLevel.SESSION;
     @UriParam(label = "common")
     private String preferredRegions;
     @UriParam(label = "common", defaultValue = "false")
+    @Metadata(deprecationNote = "Has no effect: the azure-cosmos SDK ignores this flag.")
+    @Deprecated
     private boolean clientTelemetryEnabled;
     @UriParam(label = "common", defaultValue = "false")
     private boolean connectionSharingAcrossClientsEnabled;
@@ -67,7 +68,7 @@ public class CosmosDbConfiguration implements Cloneable {
     private boolean createDatabaseIfNotExists;
     @UriParam(label = "common", defaultValue = "false")
     private boolean createContainerIfNotExists;
-    @UriParam(label = "common, advanced")
+    @UriParam(label = "producer,advanced")
     private IndexingPolicy indexingPolicy;
     @UriParam(label = "common")
     private ThroughputProperties throughputProperties;
@@ -302,11 +303,15 @@ public class CosmosDbConfiguration implements Cloneable {
      * during debugging.
      * <p>
      * DEFAULT value is false indicating this is an opt-in feature, by default no telemetry collection.
+     *
+     * @deprecated Has no effect: the azure-cosmos SDK ignores this flag.
      */
+    @Deprecated
     public boolean isClientTelemetryEnabled() {
         return clientTelemetryEnabled;
     }
 
+    @Deprecated
     public void setClientTelemetryEnabled(boolean clientTelemetryEnabled) {
         this.clientTelemetryEnabled = clientTelemetryEnabled;
     }

@@ -58,7 +58,8 @@ public interface AzureCosmosdbComponentBuilderFactory {
          * information like cpu/memory and send it to cosmos monitoring service,
          * which will be helpful during debugging. DEFAULT value is false
          * indicating this is an opt-in feature, by default no telemetry
-         * collection.
+         * collection. Deprecation note: Has no effect: the azure-cosmos SDK
+         * ignores this flag.
          * 
          * The option is a: &lt;code&gt;boolean&lt;/code&gt; type.
          * 
@@ -68,6 +69,7 @@ public interface AzureCosmosdbComponentBuilderFactory {
          * @param clientTelemetryEnabled the value to set
          * @return the dsl builder
          */
+        @Deprecated
         default AzureCosmosdbComponentBuilder clientTelemetryEnabled(boolean clientTelemetryEnabled) {
             doSetProperty("clientTelemetryEnabled", clientTelemetryEnabled);
             return this;
@@ -126,7 +128,7 @@ public interface AzureCosmosdbComponentBuilderFactory {
          * The option is a:
          * &lt;code&gt;com.azure.cosmos.ConsistencyLevel&lt;/code&gt; type.
          * 
-         * Default: SESSION
+         * Default: Session
          * Group: common
          * 
          * @param consistencyLevel the value to set
@@ -591,7 +593,7 @@ public interface AzureCosmosdbComponentBuilderFactory {
          * The option is a:
          * &lt;code&gt;com.azure.cosmos.models.IndexingPolicy&lt;/code&gt; type.
          * 
-         * Group:  advanced
+         * Group: producer (advanced)
          * 
          * @param indexingPolicy the value to set
          * @return the dsl builder
