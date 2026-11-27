@@ -46,8 +46,7 @@ public class MetricsEndpoint extends DefaultEndpoint {
 
     protected final MetricRegistry registry;
 
-    @UriPath(description = "Type of metrics")
-    @Metadata(required = true)
+    @UriPath(description = "Type of metrics", defaultValue = "meter")
     protected final MetricsType metricsType;
     @UriPath(description = "Name of metrics")
     @Metadata(required = true)

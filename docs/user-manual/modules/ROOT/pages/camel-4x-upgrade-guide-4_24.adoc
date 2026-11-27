@@ -862,6 +862,13 @@ expires; the endpoint fails to start when the profile gives no token. The identi
 that watsonx.data accepts. `apiKey` is no longer marked as required in the catalog, as `oauthProfile` can take its
 place; an endpoint with neither still fails to start.
 
+=== camel-metrics - a counter header wins over both counter options
+
+On a `metrics:counter` endpoint, the `CamelMetricsCounterDecrement` header now decrements the counter also when the
+endpoint sets `increment`. Before, the counter was incremented by the `increment` option and the header had no effect.
+A `CamelMetricsCounterIncrement` header still wins over a `CamelMetricsCounterDecrement` header, and without headers
+the `increment` option still wins over `decrement`.
+
 === camel-micrometer, camel-opentelemetry-metrics - tags and attributes from headers are used as given
 
 The `micrometer` and `opentelemetry-metrics` producers now use the tags of the `CamelMetricsTags` header and the

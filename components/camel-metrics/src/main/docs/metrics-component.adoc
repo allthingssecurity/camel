@@ -120,9 +120,9 @@ YAML::
 will update counter with name `new.name` instead of `name.not.used`.
 
 All Metrics specific headers are removed from the message once Metrics
-endpoint finishes processing of exchange. While processing exchange
-Metrics endpoint will catch all exceptions and write log entry using
-level `warn`.
+endpoint finishes processing of exchange. When the update of a metric
+fails, the exception is set on the exchange, so the error handler of the
+route handles it.
 
 [[MetricsComponent-counter]]
 === Metrics type counter
@@ -265,7 +265,10 @@ YAML::
 ==== Headers
 
 Message headers can be used to override `increment` and `decrement`
-values specified in Metrics component URI.
+values specified in Metrics component URI. A header wins over both
+options: with the `CamelMetricsCounterDecrement` header, an endpoint with
+`increment` decrements the counter. When both headers are set, the
+increment header is used.
 
 [width="100%",cols="10%,80%,10%",options="header",]
 |====================================================================

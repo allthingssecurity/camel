@@ -37,12 +37,17 @@ public class CounterProducer extends AbstractMetricsProducer {
         Counter counter = registry.counter(metricsName);
         Long increment = endpoint.getIncrement();
         Long decrement = endpoint.getDecrement();
-        Long finalIncrement = getLongHeader(in, HEADER_COUNTER_INCREMENT, increment);
-        Long finalDecrement = getLongHeader(in, HEADER_COUNTER_DECREMENT, decrement);
-        if (finalIncrement != null) {
-            counter.inc(finalIncrement);
-        } else if (finalDecrement != null) {
-            counter.dec(finalDecrement);
+        // a header wins over both options, so that a decrement header also applies when the endpoint sets increment
+        Long headerIncrement = getLongHeader(in, HEADER_COUNTER_INCREMENT, null);
+        Long headerDecrement = getLongHeader(in, HEADER_COUNTER_DECREMENT, null);
+        if (headerIncrement != null) {
+            counter.inc(headerIncrement);
+        } else if (headerDecrement != null) {
+            counter.dec(headerDecrement);
+        } else if (increment != null) {
+            counter.inc(increment);
+        } else if (decrement != null) {
+            counter.dec(decrement);
         } else {
             counter.inc();
         }

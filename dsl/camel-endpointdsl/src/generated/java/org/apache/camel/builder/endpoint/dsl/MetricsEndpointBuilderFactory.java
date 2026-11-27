@@ -303,8 +303,9 @@ public interface MetricsEndpointBuilderFactory {
          * 
          * Syntax: <code>metrics:metricsType:metricsName</code>
          * 
-         * Path parameter: metricsType (required)
+         * Path parameter: metricsType
          * Type of metrics
+         * Default value: meter
          * There are 5 enums and the value can be one of: gauge, counter,
          * histogram, meter, timer
          * 
@@ -328,8 +329,9 @@ public interface MetricsEndpointBuilderFactory {
          * 
          * Syntax: <code>metrics:metricsType:metricsName</code>
          * 
-         * Path parameter: metricsType (required)
+         * Path parameter: metricsType
          * Type of metrics
+         * Default value: meter
          * There are 5 enums and the value can be one of: gauge, counter,
          * histogram, meter, timer
          * 
