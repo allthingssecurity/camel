@@ -77,9 +77,10 @@ public class StreamEndpoint extends DefaultEndpoint {
     private String httpUrl;
     @UriParam(label = "consumer",
               description = "The request headers that the consumer sends to httpUrl, as a comma-separated list of"
-                            + " name=value or name:value pairs, for example Accept:application/json. Whitespace around"
-                            + " each name and value is removed. A value that contains a comma, = or : is not"
-                            + " supported.")
+                            + " name=value or name:value pairs, for example Accept:application/json. Each pair is split"
+                            + " at its first = or :, so a value can contain = and :, such as a URL. Whitespace around"
+                            + " each name and value is removed. A value that contains a comma is not supported, and a"
+                            + " pair without = or : is skipped with a WARN.")
     private String httpHeaders;
     @UriParam(label = "consumer",
               description = "Whether the consumer keeps reading the stream after its end, like the Unix tail -f"
@@ -99,8 +100,8 @@ public class StreamEndpoint extends DefaultEndpoint {
               description = "Whether the consumer watches the directory of fileName with the JDK WatchService for"
                             + " the creation or modification of the file, for example when it is overwritten or rolled"
                             + " over. Only for kind file, and only used with scanStream and retry: the consumer then"
-                            + " opens the file again at its end only when it changed. A fileName without a directory"
-                            + " is not watched.")
+                            + " opens the file again at its end only when it changed. For a fileName without a"
+                            + " directory, the current directory is watched.")
     private boolean fileWatcher;
     @UriParam(label = "producer",
               description = "Whether the producer closes the file of kind file after the last message of a"
@@ -117,8 +118,7 @@ public class StreamEndpoint extends DefaultEndpoint {
               description = "The delay in milliseconds before the producer writes each message.")
     private long delay;
     @UriParam(description = "The name of the charset of text, for example UTF-8. The consumer uses it to read lines"
-                            + " with kind in or file, reads lines of kind http with the JVM default charset, and does"
-                            + " not use it with readLine=false. The producer uses it to write a body that is a String"
+                            + " with kind in, file or http, and does not use it with readLine=false. The producer uses it to write a body that is a String"
                             + " or that cannot be converted to byte[]. If not set, the JVM default charset is used.")
     private String encoding;
     @UriParam(label = "consumer",
@@ -139,8 +139,8 @@ public class StreamEndpoint extends DefaultEndpoint {
               description = "The number of lines that the consumer puts in one exchange, whose body is the result"
                             + " of groupStrategy, by default a List of the lines. If 0, each line is one exchange."
                             + " Without scanStream, the lines left at the end of the stream are sent as a smaller"
-                            + " group, and with scanStream a group is sent only when it is full. With kind in and"
-                            + " without scanStream, each line is sent alone. Not used with readLine=false.")
+                            + " group, and with scanStream a group is sent only when it is full. With kind in, the lines"
+                            + " left are sent when System.in ends. Not used with readLine=false.")
     private int groupLines;
     @UriParam(label = "consumer", defaultValue = "true",
               description = "Whether the consumer reads the stream line by line and creates an exchange with a"
@@ -164,8 +164,9 @@ public class StreamEndpoint extends DefaultEndpoint {
                             + " the lines as is.")
     private GroupStrategy groupStrategy = new DefaultGroupStrategy();
     @UriParam(label = "advanced",
-              description = "Not used: the component applies no read timeout to any stream, including the"
-                            + " connection to httpUrl.")
+              description = "The read timeout in milliseconds of the connection to httpUrl (kind http): a read that"
+                            + " waits longer for data fails. If 0, the read waits without a timeout. Not used by the"
+                            + " other kinds.")
     private int readTimeout;
 
     public StreamEndpoint(String endpointUri, Component component) throws Exception {

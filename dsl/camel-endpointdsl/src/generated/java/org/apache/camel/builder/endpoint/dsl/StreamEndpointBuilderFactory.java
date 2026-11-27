@@ -46,10 +46,10 @@ public interface StreamEndpointBuilderFactory {
         }
         /**
          * The name of the charset of text, for example UTF-8. The consumer uses
-         * it to read lines with kind in or file, reads lines of kind http with
-         * the JVM default charset, and does not use it with readLine=false. The
-         * producer uses it to write a body that is a String or that cannot be
-         * converted to byte[]. If not set, the JVM default charset is used.
+         * it to read lines with kind in, file or http, and does not use it with
+         * readLine=false. The producer uses it to write a body that is a String
+         * or that cannot be converted to byte[]. If not set, the JVM default
+         * charset is used.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -85,8 +85,8 @@ public interface StreamEndpointBuilderFactory {
          * WatchService for the creation or modification of the file, for
          * example when it is overwritten or rolled over. Only for kind file,
          * and only used with scanStream and retry: the consumer then opens the
-         * file again at its end only when it changed. A fileName without a
-         * directory is not watched.
+         * file again at its end only when it changed. For a fileName without a
+         * directory, the current directory is watched.
          * 
          * The option is a: <code>boolean</code> type.
          * 
@@ -105,8 +105,8 @@ public interface StreamEndpointBuilderFactory {
          * WatchService for the creation or modification of the file, for
          * example when it is overwritten or rolled over. Only for kind file,
          * and only used with scanStream and retry: the consumer then opens the
-         * file again at its end only when it changed. A fileName without a
-         * directory is not watched.
+         * file again at its end only when it changed. For a fileName without a
+         * directory, the current directory is watched.
          * 
          * The option will be converted to a <code>boolean</code> type.
          * 
@@ -125,8 +125,8 @@ public interface StreamEndpointBuilderFactory {
          * body is the result of groupStrategy, by default a List of the lines.
          * If 0, each line is one exchange. Without scanStream, the lines left
          * at the end of the stream are sent as a smaller group, and with
-         * scanStream a group is sent only when it is full. With kind in and
-         * without scanStream, each line is sent alone. Not used with
+         * scanStream a group is sent only when it is full. With kind in, the
+         * lines left are sent when System.in ends. Not used with
          * readLine=false.
          * 
          * The option is a: <code>int</code> type.
@@ -145,8 +145,8 @@ public interface StreamEndpointBuilderFactory {
          * body is the result of groupStrategy, by default a List of the lines.
          * If 0, each line is one exchange. Without scanStream, the lines left
          * at the end of the stream are sent as a smaller group, and with
-         * scanStream a group is sent only when it is full. With kind in and
-         * without scanStream, each line is sent alone. Not used with
+         * scanStream a group is sent only when it is full. With kind in, the
+         * lines left are sent when System.in ends. Not used with
          * readLine=false.
          * 
          * The option will be converted to a <code>int</code> type.
@@ -197,8 +197,10 @@ public interface StreamEndpointBuilderFactory {
         /**
          * The request headers that the consumer sends to httpUrl, as a
          * comma-separated list of name=value or name:value pairs, for example
-         * Accept:application/json. Whitespace around each name and value is
-         * removed. A value that contains a comma, = or : is not supported.
+         * Accept:application/json. Each pair is split at its first = or :, so a
+         * value can contain = and :, such as a URL. Whitespace around each name
+         * and value is removed. A value that contains a comma is not supported,
+         * and a pair without = or : is skipped with a WARN.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -592,8 +594,9 @@ public interface StreamEndpointBuilderFactory {
             return this;
         }
         /**
-         * Not used: the component applies no read timeout to any stream,
-         * including the connection to httpUrl.
+         * The read timeout in milliseconds of the connection to httpUrl (kind
+         * http): a read that waits longer for data fails. If 0, the read waits
+         * without a timeout. Not used by the other kinds.
          * 
          * The option is a: <code>int</code> type.
          * 
@@ -607,8 +610,9 @@ public interface StreamEndpointBuilderFactory {
             return this;
         }
         /**
-         * Not used: the component applies no read timeout to any stream,
-         * including the connection to httpUrl.
+         * The read timeout in milliseconds of the connection to httpUrl (kind
+         * http): a read that waits longer for data fails. If 0, the read waits
+         * without a timeout. Not used by the other kinds.
          * 
          * The option will be converted to a <code>int</code> type.
          * 
@@ -635,10 +639,10 @@ public interface StreamEndpointBuilderFactory {
 
         /**
          * The name of the charset of text, for example UTF-8. The consumer uses
-         * it to read lines with kind in or file, reads lines of kind http with
-         * the JVM default charset, and does not use it with readLine=false. The
-         * producer uses it to write a body that is a String or that cannot be
-         * converted to byte[]. If not set, the JVM default charset is used.
+         * it to read lines with kind in, file or http, and does not use it with
+         * readLine=false. The producer uses it to write a body that is a String
+         * or that cannot be converted to byte[]. If not set, the JVM default
+         * charset is used.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -860,8 +864,9 @@ public interface StreamEndpointBuilderFactory {
             return this;
         }
         /**
-         * Not used: the component applies no read timeout to any stream,
-         * including the connection to httpUrl.
+         * The read timeout in milliseconds of the connection to httpUrl (kind
+         * http): a read that waits longer for data fails. If 0, the read waits
+         * without a timeout. Not used by the other kinds.
          * 
          * The option is a: <code>int</code> type.
          * 
@@ -875,8 +880,9 @@ public interface StreamEndpointBuilderFactory {
             return this;
         }
         /**
-         * Not used: the component applies no read timeout to any stream,
-         * including the connection to httpUrl.
+         * The read timeout in milliseconds of the connection to httpUrl (kind
+         * http): a read that waits longer for data fails. If 0, the read waits
+         * without a timeout. Not used by the other kinds.
          * 
          * The option will be converted to a <code>int</code> type.
          * 
@@ -904,10 +910,10 @@ public interface StreamEndpointBuilderFactory {
 
         /**
          * The name of the charset of text, for example UTF-8. The consumer uses
-         * it to read lines with kind in or file, reads lines of kind http with
-         * the JVM default charset, and does not use it with readLine=false. The
-         * producer uses it to write a body that is a String or that cannot be
-         * converted to byte[]. If not set, the JVM default charset is used.
+         * it to read lines with kind in, file or http, and does not use it with
+         * readLine=false. The producer uses it to write a body that is a String
+         * or that cannot be converted to byte[]. If not set, the JVM default
+         * charset is used.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -952,8 +958,9 @@ public interface StreamEndpointBuilderFactory {
         }
 
         /**
-         * Not used: the component applies no read timeout to any stream,
-         * including the connection to httpUrl.
+         * The read timeout in milliseconds of the connection to httpUrl (kind
+         * http): a read that waits longer for data fails. If 0, the read waits
+         * without a timeout. Not used by the other kinds.
          * 
          * The option is a: <code>int</code> type.
          * 
@@ -967,8 +974,9 @@ public interface StreamEndpointBuilderFactory {
             return this;
         }
         /**
-         * Not used: the component applies no read timeout to any stream,
-         * including the connection to httpUrl.
+         * The read timeout in milliseconds of the connection to httpUrl (kind
+         * http): a read that waits longer for data fails. If 0, the read waits
+         * without a timeout. Not used by the other kinds.
          * 
          * The option will be converted to a <code>int</code> type.
          * 
@@ -1083,9 +1091,10 @@ public interface StreamEndpointBuilderFactory {
         }
         /**
          * Whether the exchange is the last one of the stream. The consumer
-         * reads one line ahead to know it, except for kind in, where it is true
-         * for each line. Always false with scanStream, as a scanned stream
-         * never ends.
+         * reads one line ahead to know it, except for kind in, which it does
+         * not read ahead: there it is true for each line, and with groupLines
+         * only for the lines left when System.in ends. Always false with
+         * scanStream, as a scanned stream never ends.
          * 
          * The option is a: {@code boolean} type.
          * 
@@ -1095,6 +1104,20 @@ public interface StreamEndpointBuilderFactory {
          */
         public String streamComplete() {
             return "CamelStreamComplete";
+        }
+        /**
+         * The OutputStream that the producer of kind header writes the message
+         * body to. It is required with kind header, and the producer closes it
+         * after each message, unless it is System.out or System.err.
+         * 
+         * The option is a: {@code java.io.OutputStream} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code stream}.
+         */
+        public String stream() {
+            return "stream";
         }
     }
     static StreamEndpointBuilder endpointBuilder(String componentName, String path) {
