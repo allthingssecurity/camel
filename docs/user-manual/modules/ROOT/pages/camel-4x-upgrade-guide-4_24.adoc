@@ -3924,6 +3924,29 @@ the consumer (a WARN by default) and the next ones are logged at DEBUG, until da
 stream is opened again, at least one second after the failure (or after `scanStreamDelay`, if longer). In raw mode
 (`readLine=false`) a read that fails is reported in the same way; before, it was ignored.
 
+=== camel-stream - groupLines with kind in, fileWatcher in the current directory, and the options of kind http
+
+With `groupLines`, a `stream:in` consumer now groups the lines of System.in, and sends the lines left when System.in
+ends. Before, each line was sent alone, with `CamelStreamComplete` set to true. Now only the exchange with the lines
+left at the end has `CamelStreamComplete` set to true. Without `groupLines` nothing changes.
+
+With `fileWatcher`, a `fileName` without a directory (such as `app.log`) is now watched in the current directory.
+Before, it was not watched, so with `scanStream` and `retry` the file was never read again.
+
+A consumer with `scanStream` and without `retry` now logs a WARN when the file of kind file cannot be read when it
+starts, as it does not open the file again.
+
+The `httpHeaders` option now splits each pair at its first `=` or `:`, so a value can contain `=` and `:`, such as a
+URL or a Base64 token. Before, a pair with `=` or `:` inside its value was skipped, and a value that ended with `=` or
+`:` lost them. A pair whose value is empty, such as `name=`, is now set on the connection with an empty value instead
+of being skipped. A pair without `=` or `:` is skipped with a WARN.
+
+A `stream:http` consumer now reads lines in the charset of the `encoding` option, as kinds in and file do. Before, it
+used the JVM default charset. Without `encoding`, the JVM default charset is used, as before.
+
+The `readTimeout` option is now the read timeout of the connection to `httpUrl`. Before, it was not used. The default,
+0, waits without a timeout, as before.
+
 === camel-cyberark-vault - verifySsl and certificatePath are applied, and getSecret no longer sets the CamelCyberArkVaultSecretValue header
 
 The `verifySsl` and `certificatePath` options of the `cyberark-vault` endpoint, and the

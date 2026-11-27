@@ -30,6 +30,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Stream;
@@ -68,6 +71,8 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
     private volatile boolean initialPromptDone;
     private volatile boolean streamOpenedOnStart;
     private final List<String> lines = new CopyOnWriteArrayList<>();
+    // the parts of httpHeaders that are skipped, so each is logged once (the URL can be opened by two threads)
+    private final Set<String> skippedHttpHeaders = ConcurrentHashMap.newKeySet();
     // the failures in a row to open or read a scanned stream (reset once data is read again), and whether the scan
     // must wait before it opens the stream again, only used by the thread that reads
     private int scanFailures;
@@ -86,7 +91,12 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
 
         // use file watch service if we read from file
         if (endpoint.isFileWatcher()) {
-            String dir = new File(endpoint.getFileName()).getParent();
+            File fileToWatch = new File(endpoint.getFileName());
+            String dir = fileToWatch.getParent();
+            if (dir == null) {
+                // a file name without a directory is in the current directory
+                dir = fileToWatch.getAbsoluteFile().getParent();
+            }
             fileWatcher = new FileWatcherStrategy(dir, file -> {
                 String onlyName = file.getName();
                 String target = FileUtil.stripPath(endpoint.getFileName());
@@ -166,7 +176,7 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
         }
 
         if ("in".equals(uri)) {
-            inputStream = System.in;
+            inputStream = systemIn();
             // do not close regular inputStream as it may be System.in etc.
             inputStreamToClose = null;
         } else if ("file".equals(uri)) {
@@ -182,13 +192,9 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
         openStream();
 
         if (inputStream != null) {
-            if ("http".equals(uri)) {
-                // read as-is
-                return IOHelper.buffered(new InputStreamReader(inputStream));
-            } else {
-                Charset charset = endpoint.getCharset();
-                return IOHelper.buffered(new InputStreamReader(inputStream, charset));
-            }
+            // the charset of the encoding option, which is the JVM default charset when the option is not set
+            Charset charset = endpoint.getCharset();
+            return IOHelper.buffered(new InputStreamReader(inputStream, charset));
         } else {
             return null;
         }
@@ -342,7 +348,9 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
                 if (!eos && isRunAllowed()) {
                     // read ahead if there is more data
                     line2 = readAhead(br);
-                    boolean last = line2 == null;
+                    // kind in is not read ahead, as that would wait for the next line of System.in: with groupLines
+                    // its end is known only when readLine gives null, and the lines left are then sent below
+                    boolean last = line2 == null && !(endpoint.getGroupLines() > 0 && "in".equals(uri));
                     index = processLine(line, last, index);
                 }
             }
@@ -508,6 +516,13 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
         }
     }
 
+    /**
+     * The stream that kind in reads, System.in. Tests in this package override it.
+     */
+    InputStream systemIn() {
+        return System.in;
+    }
+
     private String readAhead(BufferedReader br) throws IOException {
         if (uri.equals("in")) {
             // do not read ahead with reading from system in
@@ -534,6 +549,12 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
         } else if (endpoint.isScanStream()) {
             // if we scan the stream then it may not be available and we should return null
             fileStream = null;
+            if (!endpoint.isRetry()) {
+                // without retry the file is not opened again, so the consumer would read nothing without a word
+                LOG.warn("Cannot read the file {} of {}, and it is not opened again: set the retry option to read it once"
+                         + " it can be read",
+                        file, endpoint);
+            }
         } else {
             throw new IllegalArgumentException(INVALID_URI);
         }
@@ -543,17 +564,28 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
 
     /**
      * From a comma-separated list of headers in the format of "FIELD=VALUE" or "FIELD:VALUE", split on the commas and
-     * split on the separator to create a stream of Map.Entry values while filtering out invalid combinations
+     * split each part on the first separator to create a stream of Map.Entry values, so that the value can contain =
+     * and : (such as a URL or a Base64 token). A part without a separator or without a name is skipped and logged once.
      *
      * @param  headerList A string containing a comma-separated list of headers
      * @return            A Stream of Map.Entry items which can then be added as headers to a URLConnection
      */
     Stream<Map.Entry<String, String>> parseHeaders(String headerList) {
-        return Arrays.asList(headerList.split(","))
-                .stream()
-                .map(s -> s.split("[=:]"))
-                .filter(h -> h.length == 2)
-                .map(h -> Map.entry(h[0].trim(), h[1].trim()));
+        return Arrays.stream(headerList.split(","))
+                .map(this::parseHeader)
+                .filter(Objects::nonNull);
+    }
+
+    private Map.Entry<String, String> parseHeader(String part) {
+        String[] h = part.split("[=:]", 2);
+        if (h.length == 2 && !h[0].isBlank()) {
+            return Map.entry(h[0].trim(), h[1].trim());
+        }
+        if (!part.isBlank() && skippedHttpHeaders.add(part)) {
+            LOG.warn("Skipping the part '{}' of the httpHeaders option of {}: it is not a name=value or name:value pair",
+                    part, endpoint);
+        }
+        return null;
     }
 
     private InputStream resolveStreamFromUrl() throws IOException {
@@ -562,6 +594,9 @@ public class StreamConsumer extends DefaultConsumer implements Runnable {
 
         urlConnectionToClose = URI.create(url).toURL().openConnection();
         urlConnectionToClose.setUseCaches(false);
+        if (endpoint.getReadTimeout() > 0) {
+            urlConnectionToClose.setReadTimeout(endpoint.getReadTimeout());
+        }
         String headers = endpoint.getHttpHeaders();
         if (headers != null) {
             parseHeaders(headers)

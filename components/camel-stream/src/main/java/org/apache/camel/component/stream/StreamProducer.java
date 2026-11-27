@@ -109,7 +109,7 @@ public class StreamProducer extends DefaultAsyncProducer {
 
     private OutputStream resolveStreamFromHeader(Exchange exchange) throws NoSuchHeaderException {
         // the stream header is mandatory, and must be (convertible to) an OutputStream
-        return ExchangeHelper.getMandatoryHeader(exchange, "stream", OutputStream.class);
+        return ExchangeHelper.getMandatoryHeader(exchange, StreamConstants.STREAM, OutputStream.class);
     }
 
     private void delay(long ms) throws InterruptedException {

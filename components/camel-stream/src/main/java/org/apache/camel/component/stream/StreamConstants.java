@@ -28,10 +28,17 @@ public final class StreamConstants {
     public static final String STREAM_INDEX = "CamelStreamIndex";
     @Metadata(label = "consumer",
               description = "Whether the exchange is the last one of the stream. The consumer reads one line ahead"
-                            + " to know it, except for kind in, where it is true for each line. Always false with"
+                            + " to know it, except for kind in, which it does not read ahead: there it is true for each"
+                            + " line, and with groupLines only for the lines left when System.in ends. Always false with"
                             + " scanStream, as a scanned stream never ends.",
               javaType = "boolean")
     public static final String STREAM_COMPLETE = "CamelStreamComplete";
+    @Metadata(label = "producer",
+              description = "The java.io.OutputStream that the producer of kind header writes the message body to. It"
+                            + " is required with kind header, and the producer closes it after each message, unless it"
+                            + " is System.out or System.err.",
+              javaType = "java.io.OutputStream")
+    public static final String STREAM = "stream";
 
     private StreamConstants() {
     }
