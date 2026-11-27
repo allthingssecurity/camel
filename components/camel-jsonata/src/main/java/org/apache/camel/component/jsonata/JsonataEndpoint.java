@@ -19,6 +19,7 @@ package org.apache.camel.component.jsonata;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -35,6 +36,7 @@ import org.apache.camel.component.ResourceEndpoint;
 import org.apache.camel.spi.BodyType;
 import org.apache.camel.spi.BodyType.Carrier;
 import org.apache.camel.spi.BodyTypes;
+import org.apache.camel.spi.Metadata;
 import org.apache.camel.spi.UriEndpoint;
 import org.apache.camel.spi.UriParam;
 import org.apache.camel.support.ExchangeHelper;
@@ -48,6 +50,7 @@ import static com.dashjoin.jsonata.Jsonata.jsonata;
 /**
  * Transforms JSON payload using JSONata transformation.
  */
+@Metadata(excludeProperties = "allowContextMapAll")
 @UriEndpoint(firstVersion = "3.5.0", scheme = "jsonata", title = "JSONata", syntax = "jsonata:resourceUri",
              producerOnly = true, remote = false,
              category = { Category.TRANSFORMATION }, headersClass = JsonataConstants.class)
@@ -85,6 +88,9 @@ public class JsonataEndpoint extends ResourceEndpoint {
     private boolean allowTemplateFromHeader;
     @UriParam
     private boolean prettyPrint;
+
+    // the parsed expression of the resource, kept with contentCache so it is parsed once
+    private volatile Jsonata cachedExpression;
 
     public JsonataEndpoint() {
     }
@@ -183,26 +189,23 @@ public class JsonataEndpoint extends ResourceEndpoint {
             input = jacksonInput(exchange);
         }
 
-        InputStream is = getResourceAsInputStream();
+        Jsonata expression = null;
         if (allowTemplateFromHeader) {
             String newResourceUri = exchange.getIn().getHeader(JsonataConstants.JSONATA_RESOURCE_URI, String.class);
             if (newResourceUri != null) {
                 exchange.getIn().removeHeader(JsonataConstants.JSONATA_RESOURCE_URI);
+                InputStream is;
                 if (ResourceHelper.hasScheme(newResourceUri)) {
                     is = ResourceHelper.resolveMandatoryResourceAsInputStream(getCamelContext(), newResourceUri);
                 } else {
                     is = new ByteArrayInputStream(newResourceUri.getBytes());
                 }
+                expression = parse(is);
             }
         }
-        Jsonata expression;
-        try (InputStreamReader inputStreamReader
-                = new InputStreamReader(is, StandardCharsets.UTF_8);
-             BufferedReader bufferedReader = new BufferedReader(inputStreamReader);) {
-            String spec = bufferedReader
-                    .lines()
-                    .collect(Collectors.joining("\n"));
-            expression = jsonata(spec);
+        if (expression == null) {
+            // the resource of the endpoint is opened only when the header does not replace it
+            expression = resourceExpression();
         }
 
         Jsonata.Frame frame = expression.createFrame();
@@ -221,6 +224,43 @@ public class JsonataEndpoint extends ResourceEndpoint {
             output = mapper.readTree(bodyAsString);
         }
         ExchangeHelper.setInOutBodyPatternAware(exchange, output);
+    }
+
+    private Jsonata resourceExpression() throws IOException {
+        if (!isContentCache()) {
+            return parse(getResourceAsInputStream());
+        }
+        Jsonata answer = cachedExpression;
+        if (answer == null) {
+            // two threads may both parse the first time, which is harmless
+            answer = parse(getResourceAsInputStream());
+            cachedExpression = answer;
+        }
+        return answer;
+    }
+
+    private static Jsonata parse(InputStream is) throws IOException {
+        try (InputStreamReader inputStreamReader
+                = new InputStreamReader(is, StandardCharsets.UTF_8);
+             BufferedReader bufferedReader = new BufferedReader(inputStreamReader);) {
+            String spec = bufferedReader
+                    .lines()
+                    .collect(Collectors.joining("\n"));
+            return jsonata(spec);
+        }
+    }
+
+    /**
+     * The parsed expression of the resource that the endpoint keeps with contentCache, or null.
+     */
+    Jsonata getExpression() {
+        return cachedExpression;
+    }
+
+    @Override
+    public void clearContentCache() {
+        super.clearContentCache();
+        cachedExpression = null;
     }
 
     /**

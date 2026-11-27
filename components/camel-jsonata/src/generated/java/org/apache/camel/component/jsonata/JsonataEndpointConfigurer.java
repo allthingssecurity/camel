@@ -24,8 +24,6 @@ public class JsonataEndpointConfigurer extends PropertyConfigurerSupport impleme
     public boolean configure(CamelContext camelContext, Object obj, String name, Object value, boolean ignoreCase) {
         JsonataEndpoint target = (JsonataEndpoint) obj;
         switch (ignoreCase ? name.toLowerCase(Locale.ROOT) : name) {
-        case "allowcontextmapall":
-        case "allowContextMapAll": target.setAllowContextMapAll(property(camelContext, boolean.class, value)); return true;
         case "allowtemplatefromheader":
         case "allowTemplateFromHeader": target.setAllowTemplateFromHeader(property(camelContext, boolean.class, value)); return true;
         case "contentcache":
@@ -47,8 +45,6 @@ public class JsonataEndpointConfigurer extends PropertyConfigurerSupport impleme
     @Override
     public Class<?> getOptionType(String name, boolean ignoreCase) {
         switch (ignoreCase ? name.toLowerCase(Locale.ROOT) : name) {
-        case "allowcontextmapall":
-        case "allowContextMapAll": return boolean.class;
         case "allowtemplatefromheader":
         case "allowTemplateFromHeader": return boolean.class;
         case "contentcache":
@@ -71,8 +67,6 @@ public class JsonataEndpointConfigurer extends PropertyConfigurerSupport impleme
     public Object getOptionValue(Object obj, String name, boolean ignoreCase) {
         JsonataEndpoint target = (JsonataEndpoint) obj;
         switch (ignoreCase ? name.toLowerCase(Locale.ROOT) : name) {
-        case "allowcontextmapall":
-        case "allowContextMapAll": return target.isAllowContextMapAll();
         case "allowtemplatefromheader":
         case "allowTemplateFromHeader": return target.isAllowTemplateFromHeader();
         case "contentcache":

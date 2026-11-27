@@ -24,8 +24,7 @@ public class JsonataEndpointUriFactory extends org.apache.camel.support.componen
     private static final Set<String> ENDPOINT_IDENTITY_PROPERTY_NAMES;
     private static final Map<String, String> MULTI_VALUE_PREFIXES;
     static {
-        Set<String> props = new HashSet<>(9);
-        props.add("allowContextMapAll");
+        Set<String> props = new HashSet<>(8);
         props.add("allowTemplateFromHeader");
         props.add("contentCache");
         props.add("frameBinding");
