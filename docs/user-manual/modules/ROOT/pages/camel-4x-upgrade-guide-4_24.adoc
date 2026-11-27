@@ -12187,6 +12187,15 @@ response now leaves out that header and logs it at DEBUG level, instead of faili
 the route has already run. Headers with a valid name are written as before. A route that needs such a value in the
 response must set it in a header with a valid name.
 
+=== camel-cassandraql - an unknown name in extraTypeCodecs fails the start of the endpoint
+
+An unknown name in the `extraTypeCodecs` option of a `cql` endpoint, for example a typo such as `BLOB_TO_ARAY`, now
+fails the start of the endpoint with an `IllegalArgumentException` that lists the possible names. Before, the name was
+ignored, no codec was registered, and the error came only later, when a row was read or written. Empty names, as after
+a trailing comma, are still ignored.
+
+The `clusterName` option is deprecated. It has never had an effect: the component does not pass it to the driver.
+
 === Kamelets - removed Kamelets
 
 The Kamelet catalog (camel-kamelets 4.24) removes Kamelets that could not work on Camel 4.23 or 4.24:

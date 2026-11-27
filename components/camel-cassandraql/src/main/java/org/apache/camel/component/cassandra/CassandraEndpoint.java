@@ -39,6 +39,7 @@ import org.apache.camel.spi.BodyType;
 import org.apache.camel.spi.BodyType.Carrier;
 import org.apache.camel.spi.BodyTypes;
 import org.apache.camel.spi.EndpointServiceLocation;
+import org.apache.camel.spi.Metadata;
 import org.apache.camel.spi.UriEndpoint;
 import org.apache.camel.spi.UriParam;
 import org.apache.camel.spi.UriPath;
@@ -97,6 +98,9 @@ public class CassandraEndpoint extends ScheduledPollEndpoint implements Endpoint
     @UriParam(defaultValue = "true")
     private boolean prepareStatements = true;
     @UriParam
+    @Metadata(deprecationNote = "Not used: the component does not pass it to the driver, and the session builder of the"
+                                + " Cassandra Java Driver 4.x has no cluster name setting")
+    @Deprecated
     private String clusterName;
     @UriParam(label = "security", security = "secret")
     private String username;
@@ -104,10 +108,15 @@ public class CassandraEndpoint extends ScheduledPollEndpoint implements Endpoint
     private String password;
     @UriParam(label = "advanced")
     private CqlSession session;
+    @UriParam(label = "advanced",
+              description = "The consistency level of the prepared statements: the cql option and a CQL String in the"
+                            + " CamelCqlQuery header, when prepareStatements is true. It is not used for a simple statement"
+                            + " (prepareStatements=false) or a SimpleStatement in the header. If not set, the driver uses"
+                            + " the consistency level of its configuration.")
     private DefaultConsistencyLevel consistencyLevel;
     @UriParam(label = "advanced")
     private String loadBalancingPolicyClass;
-    @UriParam(label = "advanced")
+    @UriParam(label = "advanced", defaultValue = "ALL")
     private ResultSetConversionStrategy resultSetConversionStrategy = ResultSetConversionStrategies.all();
     @UriParam(label = "advanced")
     private String extraTypeCodecs;
@@ -235,10 +244,16 @@ public class CassandraEndpoint extends ScheduledPollEndpoint implements Endpoint
 
             for (String codec : c) {
                 codec = codec.trim();
-                CassandraExtraCodecs ec = getCamelContext().getTypeConverter().tryConvertTo(CassandraExtraCodecs.class, codec);
-                if (ec != null) {
-                    sessionBuilder.addTypeCodecs(ec.codec());
+                if (codec.isEmpty()) {
+                    continue;
                 }
+                CassandraExtraCodecs ec = getCamelContext().getTypeConverter().tryConvertTo(CassandraExtraCodecs.class, codec);
+                if (ec == null) {
+                    throw new IllegalArgumentException(
+                            "Unknown extra type codec " + codec + " in the extraTypeCodecs option. Possible values are: "
+                                                       + Arrays.toString(CassandraExtraCodecs.values()));
+                }
+                sessionBuilder.addTypeCodecs(ec.codec());
             }
         }
 
@@ -360,6 +375,7 @@ public class CassandraEndpoint extends ScheduledPollEndpoint implements Endpoint
         this.session = session;
     }
 
+    @Deprecated
     public String getClusterName() {
         return clusterName;
     }
@@ -367,6 +383,7 @@ public class CassandraEndpoint extends ScheduledPollEndpoint implements Endpoint
     /**
      * Cluster name
      */
+    @Deprecated
     public void setClusterName(String clusterName) {
         this.clusterName = clusterName;
     }
