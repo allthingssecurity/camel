@@ -94,14 +94,14 @@ plain text.
 === Using ServiceKey Configuration Bean
 
 Access key and secret keys are required to authenticate against cloud FunctionGraph service. You can avoid having them being exposed
-and scattered over in your endpoint uri by wrapping them inside a bean of class `org.apache.camel.component.huaweicloud.functiongraph.models.ServiceKeys`.
+and scattered over in your endpoint uri by wrapping them inside a bean of class `org.apache.camel.component.huaweicloud.common.models.ServiceKeys`.
 Add it to the registry and let Camel look it up by referring the object via endpoint query parameter `serviceKeys`.
 
 Check the following code snippets:
 
 [source,xml]
 ----
-<bean id="myServiceKeyConfig" class="org.apache.camel.component.huaweicloud.functiongraph.models.ServiceKeys">
+<bean id="myServiceKeyConfig" class="org.apache.camel.component.huaweicloud.common.models.ServiceKeys">
    <property name="accessKey" value="your_access_key" />
    <property name="secretKey" value="your_secret_key" />
 </bean>

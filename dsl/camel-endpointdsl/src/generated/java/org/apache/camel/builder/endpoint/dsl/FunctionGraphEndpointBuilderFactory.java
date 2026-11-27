@@ -128,42 +128,6 @@ public interface FunctionGraphEndpointBuilderFactory {
             return this;
         }
         /**
-         * The AK/SK pair as an
-         * org.apache.camel.component.huaweicloud.common.models.ServiceKeys.
-         * When set, its accessKey and secretKey replace the accessKey and
-         * secretKey options.
-         * 
-         * The option is a:
-         * <code>org.apache.camel.component.huaweicloud.common.models.ServiceKeys</code> type.
-         * 
-         * Group: producer
-         * 
-         * @param serviceKeys the value to set
-         * @return the dsl builder
-         */
-        default FunctionGraphEndpointBuilder serviceKeys(org.apache.camel.component.huaweicloud.common.models.ServiceKeys serviceKeys) {
-            doSetProperty("serviceKeys", serviceKeys);
-            return this;
-        }
-        /**
-         * The AK/SK pair as an
-         * org.apache.camel.component.huaweicloud.common.models.ServiceKeys.
-         * When set, its accessKey and secretKey replace the accessKey and
-         * secretKey options.
-         * 
-         * The option will be converted to a
-         * <code>org.apache.camel.component.huaweicloud.common.models.ServiceKeys</code> type.
-         * 
-         * Group: producer
-         * 
-         * @param serviceKeys the value to set
-         * @return the dsl builder
-         */
-        default FunctionGraphEndpointBuilder serviceKeys(String serviceKeys) {
-            doSetProperty("serviceKeys", serviceKeys);
-            return this;
-        }
-        /**
          * The host name or IP address of the proxy server. The producer uses a
          * proxy only when both this option and the proxyPort option are set.
          * 
@@ -244,7 +208,6 @@ public interface FunctionGraphEndpointBuilderFactory {
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
-         * Required: true
          * Group: security
          * 
          * @param accessKey the value to set
@@ -292,7 +255,6 @@ public interface FunctionGraphEndpointBuilderFactory {
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
-         * Required: true
          * Group: security
          * 
          * @param secretKey the value to set
@@ -300,6 +262,42 @@ public interface FunctionGraphEndpointBuilderFactory {
          */
         default FunctionGraphEndpointBuilder secretKey(String secretKey) {
             doSetProperty("secretKey", secretKey);
+            return this;
+        }
+        /**
+         * The AK/SK pair as an
+         * org.apache.camel.component.huaweicloud.common.models.ServiceKeys.
+         * When set, its accessKey and secretKey replace the accessKey and
+         * secretKey options.
+         * 
+         * The option is a:
+         * <code>org.apache.camel.component.huaweicloud.common.models.ServiceKeys</code> type.
+         * 
+         * Group: security
+         * 
+         * @param serviceKeys the value to set
+         * @return the dsl builder
+         */
+        default FunctionGraphEndpointBuilder serviceKeys(org.apache.camel.component.huaweicloud.common.models.ServiceKeys serviceKeys) {
+            doSetProperty("serviceKeys", serviceKeys);
+            return this;
+        }
+        /**
+         * The AK/SK pair as an
+         * org.apache.camel.component.huaweicloud.common.models.ServiceKeys.
+         * When set, its accessKey and secretKey replace the accessKey and
+         * secretKey options.
+         * 
+         * The option will be converted to a
+         * <code>org.apache.camel.component.huaweicloud.common.models.ServiceKeys</code> type.
+         * 
+         * Group: security
+         * 
+         * @param serviceKeys the value to set
+         * @return the dsl builder
+         */
+        default FunctionGraphEndpointBuilder serviceKeys(String serviceKeys) {
+            doSetProperty("serviceKeys", serviceKeys);
             return this;
         }
     }

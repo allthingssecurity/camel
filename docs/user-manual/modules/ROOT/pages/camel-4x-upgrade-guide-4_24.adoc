@@ -7660,6 +7660,12 @@ array, another JSON value or plain text. A result with a `body` field, such as t
 Gateway trigger, still gives that field, and no body when the field is null. A route that tested for a null body after
 the call must now test the result instead.
 
+=== camel-huaweicloud-functiongraph - log lines about the region and the XCffLogType property
+
+A producer whose `endpoint` option is set without the `region` option now logs a WARN when it starts, as the URN of
+the invoked function then has `null` as its region. The line `No XCffLogType given`, which was logged at WARN for every
+message without the `CamelHwCloudFgXCffLogType` exchange property, is now logged at DEBUG.
+
 === camel-slack - consumer and a suspended route
 
 When a route is suspended (`RouteController.suspendRoute`, also from a route policy that suspends the route such as

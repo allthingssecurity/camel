@@ -46,6 +46,17 @@ public class FunctionGraphProducer extends DefaultProducer {
         this.endpoint = endpoint;
     }
 
+    @Override
+    protected void doStart() throws Exception {
+        super.doStart();
+        // the URN of the function needs the region also when the client uses the endpoint option. This is not an
+        // error, so that a route that works today keeps working, but the URN then has null as its region.
+        if (ObjectHelper.isNotEmpty(endpoint.getEndpoint()) && ObjectHelper.isEmpty(endpoint.getRegion())) {
+            LOG.warn("The endpoint option is set, but the region option is not. The URN of the invoked function needs the"
+                     + " region, so it is urn:fss:null:...; set the region option too.");
+        }
+    }
+
     public void process(Exchange exchange) throws Exception {
         ClientConfigurations clientConfigurations = new ClientConfigurations(endpoint);
 
@@ -192,7 +203,7 @@ public class FunctionGraphProducer extends DefaultProducer {
 
         // checking for optional XCffLogType
         if (ObjectHelper.isEmpty(exchange.getProperty(FunctionGraphProperties.XCFFLOGTYPE))) {
-            LOG.warn("No XCffLogType given");
+            LOG.debug("No XCffLogType given");
         } else {
             clientConfigurations.setXCffLogType((String) exchange.getProperty(FunctionGraphProperties.XCFFLOGTYPE));
         }

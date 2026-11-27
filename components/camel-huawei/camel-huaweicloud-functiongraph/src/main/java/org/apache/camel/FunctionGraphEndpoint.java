@@ -126,7 +126,7 @@ public class FunctionGraphEndpoint extends DefaultEndpoint {
     @UriParam(description = "The AK/SK pair as an org.apache.camel.component.huaweicloud.common.models.ServiceKeys. When set,"
                             + " its accessKey and secretKey replace the accessKey and secretKey options.",
               displayName = "Service Configuration",
-              security = "secret")
+              security = "secret", label = "security")
     @Metadata(required = false)
     private ServiceKeys serviceKeys;
 
@@ -134,14 +134,14 @@ public class FunctionGraphEndpoint extends DefaultEndpoint {
                             + " option is set.",
               displayName = "API access key (AK)", security = "secret",
               label = "security")
-    @Metadata(required = true)
+    @Metadata(required = false)
     private String accessKey;
 
     @UriParam(description = "The secret access key (SK) of the Huawei Cloud credentials. It is not used when the serviceKeys"
                             + " option is set.",
               displayName = "API secret key (SK)", security = "secret",
               label = "security")
-    @Metadata(required = true)
+    @Metadata(required = false)
     private String secretKey;
 
     private FunctionGraphClient functionGraphClient;
