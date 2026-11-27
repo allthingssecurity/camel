@@ -22,7 +22,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.invocation.InvocationContext;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.FinishReason;
 import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.rag.content.Content;
@@ -111,6 +113,27 @@ class LangChain4jAgentResultHeadersTest extends CamelTestSupport {
         assertSame(toolExecution, toolExecutions.get(0));
         assertEquals("weather", toolExecutions.get(0).request().name());
         assertEquals("Sunny, 22C", toolExecutions.get(0).result());
+    }
+
+    @Test
+    void shouldSetResponseModelFromTheFinalResponse() throws Exception {
+        agentRef.set((body, exchange) -> Result.<String> builder()
+                .content("Plain answer")
+                .finalResponse(ChatResponse.builder()
+                        .aiMessage(AiMessage.from("Plain answer"))
+                        .modelName("gpt-4o-2024-08-06")
+                        .build())
+                .build());
+
+        MockEndpoint mock = getMockEndpoint("mock:result");
+        mock.expectedMessageCount(1);
+
+        template.sendBody("direct:start", "Hello");
+
+        mock.assertIsSatisfied(10, TimeUnit.SECONDS);
+
+        Exchange exchange = mock.getExchanges().get(0);
+        assertEquals("gpt-4o-2024-08-06", exchange.getMessage().getHeader(Headers.RESPONSE_MODEL));
     }
 
     @Test

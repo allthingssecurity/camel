@@ -59,8 +59,9 @@ public class Headers {
     @Metadata(description = "The request model name.", javaType = "String")
     public static final String REQUEST_MODEL = "CamelLangChain4jAgentRequestModel";
 
-    @Metadata(description = "The response model name. Not set by the agent producer when langchain4j Result "
-                            + "does not expose it.",
+    @Metadata(description = "The name of the model that gave the final response, as the chat model reports it. Not set "
+                            + "when the chat model does not report it, or when the agent returns a Result without its "
+                            + "final response.",
               javaType = "String")
     public static final String RESPONSE_MODEL = "CamelLangChain4jAgentResponseModel";
 

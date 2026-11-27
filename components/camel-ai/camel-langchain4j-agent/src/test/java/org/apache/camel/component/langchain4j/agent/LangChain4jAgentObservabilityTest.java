@@ -98,7 +98,7 @@ class LangChain4jAgentObservabilityTest extends CamelTestSupport {
         assertThat(mock.getExchanges().get(0).getMessage().getHeader(Headers.OUTPUT_TOKEN_COUNT)).isEqualTo(2);
         assertThat(mock.getExchanges().get(0).getMessage().getHeader(Headers.TOTAL_TOKEN_COUNT)).isEqualTo(5);
         assertThat(mock.getExchanges().get(0).getMessage().getHeader(Headers.FINISH_REASON)).isEqualTo(FinishReason.STOP);
-        assertThat(mock.getExchanges().get(0).getMessage().getHeader(Headers.RESPONSE_MODEL)).isNull();
+        assertThat(mock.getExchanges().get(0).getMessage().getHeader(Headers.RESPONSE_MODEL)).isEqualTo("gpt-4o");
 
         assertThat(tracer.genAiSpans()).hasSize(1);
         Map<String, String> tags = tracer.genAiSpans().get(0).tags();

@@ -19,6 +19,7 @@ package org.apache.camel.component.langchain4j.agent;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
@@ -26,6 +27,7 @@ import dev.langchain4j.mcp.client.transport.McpTransport;
 import dev.langchain4j.mcp.client.transport.http.StreamableHttpMcpTransport;
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport;
 import org.apache.camel.CamelContext;
+import org.apache.camel.RuntimeCamelException;
 import org.apache.camel.support.OAuthHelper;
 
 /**
@@ -220,10 +222,12 @@ public class LangChain4jMcpServerDefinition {
     @SuppressWarnings("deprecation")
     private McpTransport buildTransport(CamelContext camelContext) throws Exception {
         // Resolve OAuth token for HTTP-based transports
-        Map<String, String> authHeaders = null;
+        Supplier<Map<String, String>> authHeaders = null;
         if (oauthProfile != null && !oauthProfile.isBlank() && camelContext != null) {
-            String token = OAuthHelper.resolveOAuthToken(camelContext, oauthProfile);
-            authHeaders = Map.of("Authorization", "Bearer " + token);
+            // resolve a token now, so that a profile that cannot give one fails when the client is built
+            OAuthHelper.resolveOAuthToken(camelContext, oauthProfile);
+            // and ask the profile again for each request, so that an expired token is replaced
+            authHeaders = () -> Map.of("Authorization", "Bearer " + resolveOAuthToken(camelContext));
         }
 
         if ("http".equalsIgnoreCase(transportType) || "streamableHttp".equalsIgnoreCase(transportType)) {
@@ -254,6 +258,15 @@ public class LangChain4jMcpServerDefinition {
             throw new IllegalArgumentException(
                     "Unsupported MCP transport type: " + transportType
                                                + ". Supported values: stdio, http, streamableHttp");
+        }
+    }
+
+    private String resolveOAuthToken(CamelContext camelContext) {
+        try {
+            return OAuthHelper.resolveOAuthToken(camelContext, oauthProfile);
+        } catch (Exception e) {
+            throw new RuntimeCamelException(
+                    "Failed to acquire OAuth token for profile '" + oauthProfile + "' of MCP server " + serverName, e);
         }
     }
 }

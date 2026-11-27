@@ -1018,8 +1018,9 @@ public interface LangChain4jAgentEndpointBuilderFactory {
             return "CamelLangChain4jAgentRequestModel";
         }
         /**
-         * The response model name. Not set by the agent producer when
-         * langchain4j Result does not expose it.
+         * The name of the model that gave the final response, as the chat model
+         * reports it. Not set when the chat model does not report it, or when
+         * the agent returns a Result without its final response.
          * 
          * The option is a: {@code String} type.
          * 

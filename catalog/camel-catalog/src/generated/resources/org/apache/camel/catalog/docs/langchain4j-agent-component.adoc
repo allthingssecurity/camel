@@ -73,6 +73,9 @@ With this extension, the authenticated user's OIDC access token is automatically
 === camel-main and manual MCP server configuration
 
 When running outside Quarkus (e.g., camel-main) or when manually configuring MCP servers via inline `mcpServer.<name>.*` parameters, use the `oauthProfile` option to acquire an access token via the OAuth 2.0 Client Credentials grant. The token is injected as an `Authorization: Bearer` header on HTTP-based MCP transports. This requires `camel-oauth` on the classpath.
+The producer asks the profile for the token on each request to the MCP server, so a token that expired is replaced.
+camel-oauth caches the token until shortly before it expires (unless `camel.oauth.<profile>.cache-tokens` is `false`),
+so this does not request a new token each time.
 
 [source,properties]
 ----
@@ -219,7 +222,7 @@ Agents are configured using the `AgentConfiguration` class which provides a flue
 | `withHallucinatedToolNameStrategy(...)` | Handles requests for tool names that do not exist (for example a hallucinated `task_complete` tool)
 | `withToolExecutionErrorHandler(...)` | Converts tool execution exceptions into tool result messages for the LLM
 | `withToolArgumentsErrorHandler(...)` | Handles invalid or unparsable tool arguments
-| `withCompensateOnToolErrors(Boolean)` | Sends tool errors back to the LLM so it can recover instead of failing the exchange
+| `withCompensateOnToolErrors(Boolean)` | Runs the compensating actions (methods annotated with `@CompensateFor`) of the tools that already ran when a tool fails. To send tool errors back to the LLM, use `withToolExecutionErrorHandler(...)`
 | `withExecuteToolsConcurrently()` / `withExecuteToolsConcurrently(Executor)` | Runs multiple tool calls from one LLM turn in parallel
 |===
 

@@ -16,17 +16,23 @@
  */
 package org.apache.camel.component.langchain4j.agent;
 
+import java.util.Arrays;
+
 final class ToolsTagsHelper {
     private ToolsTagsHelper() {
     }
 
     /**
-     * Split the list of tags
+     * Splits a comma-separated list of tags or names. Each part is trimmed and empty parts are dropped, as the tags of
+     * an ai-tool endpoint are.
      *
-     * @param  tagList
-     * @return
+     * @param  tagList the comma-separated list
+     * @return         the trimmed, non-empty parts
      */
     public static String[] splitTags(String tagList) {
-        return tagList.split(",");
+        return Arrays.stream(tagList.split(","))
+                .map(String::trim)
+                .filter(tag -> !tag.isEmpty())
+                .toArray(String[]::new);
     }
 }

@@ -475,7 +475,7 @@ public class AgentConfiguration {
     }
 
     /**
-     * Gets whether tool error compensation is enabled.
+     * Gets whether the compensating actions of the tools run when a tool fails.
      *
      * @return {@code true} if enabled, {@code false} if disabled, or {@code null} if not configured
      */
@@ -484,10 +484,11 @@ public class AgentConfiguration {
     }
 
     /**
-     * Sets whether the agent should attempt to compensate when tool execution errors occur by sending the error back to
-     * the LLM for recovery.
+     * Sets whether LangChain4j runs the compensating actions when a tool fails: the methods annotated with
+     * {@code @CompensateFor} of the tools that already ran. Sending tool errors back to the LLM is done by
+     * {@link #withToolExecutionErrorHandler(ToolExecutionErrorHandler)}.
      *
-     * @param  compensateOnToolErrors {@code true} to enable compensation, {@code false} to disable
+     * @param  compensateOnToolErrors {@code true} to run the compensating actions, {@code false} not to
      * @return                        this configuration instance for method chaining
      */
     public AgentConfiguration withCompensateOnToolErrors(Boolean compensateOnToolErrors) {

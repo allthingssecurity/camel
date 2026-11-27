@@ -40,6 +40,7 @@ import dev.langchain4j.model.chat.request.ResponseFormat;
 import dev.langchain4j.model.chat.request.ResponseFormatType;
 import dev.langchain4j.model.chat.request.json.JsonRawSchema;
 import dev.langchain4j.model.chat.request.json.JsonSchema;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.ModerationException;
 import dev.langchain4j.service.Result;
@@ -317,6 +318,11 @@ public class LangChain4jAgentProducer extends DefaultProducer {
 
         if (result.toolExecutions() != null && !result.toolExecutions().isEmpty()) {
             message.setHeader(Headers.TOOL_EXECUTIONS, result.toolExecutions());
+        }
+
+        ChatResponse finalResponse = result.finalResponse();
+        if (finalResponse != null && ObjectHelper.isNotEmpty(finalResponse.modelName())) {
+            message.setHeader(Headers.RESPONSE_MODEL, finalResponse.modelName());
         }
     }
 

@@ -853,6 +853,19 @@ A URL whose path is not the endpoint of the server, such as `http://host:8080/v1
 because its path was ignored, and now fails: set the URL of the endpoint, here `http://host:8080/mcp`, or remove the
 path. The URL must be absolute, with a scheme and a host.
 
+=== camel-langchain4j-agent - exclude headers with spaces, OAuth token of an MCP server, response model header
+
+The `CamelLangChain4jAgentExcludeTags` and `CamelLangChain4jAgentExcludeMcpServers` headers now compare the tags and
+the MCP server names without the spaces around the commas, in the header and in the `tags` option. Before, `tags=a, b`
+with the header `b`, or the header `a, b`, did not exclude `b`, and the model was still offered its tools.
+
+With `mcpServer.<name>.oauthProfile`, the producer now asks the OAuth profile for the token on each request to the MCP
+server, instead of once when it starts, so a token that expired is replaced. With camel-oauth and
+`camel.oauth.<profile>.cache-tokens=false`, a new token is requested for each request to the MCP server.
+
+The `CamelLangChain4jAgentResponseModel` header is now set to the model name of the final response of the chat model,
+when the chat model reports it. Before, the producer did not set it.
+
 === camel-ibm-watsonx-data - the OAuth token of oauthProfile is sent as a Bearer token
 
 With `oauthProfile`, the endpoint used to obtain an access token once at startup and use it as `apiKey`, so the token
