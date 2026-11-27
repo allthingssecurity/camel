@@ -239,12 +239,14 @@ public interface GoogleFirestoreComponentBuilderFactory {
             return this;
         }
     
+        
         /**
          * Set the operation for the producer.
          * 
          * The option is a:
          * &lt;code&gt;org.apache.camel.component.google.firestore.GoogleFirestoreOperations&lt;/code&gt; type.
          * 
+         * Default: setDocument
          * Group: producer
          * 
          * @param operation the value to set

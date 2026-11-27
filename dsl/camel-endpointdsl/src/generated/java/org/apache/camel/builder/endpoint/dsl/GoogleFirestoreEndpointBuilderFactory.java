@@ -998,6 +998,7 @@ public interface GoogleFirestoreEndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.google.firestore.GoogleFirestoreOperations</code> type.
          * 
+         * Default: setDocument
          * Group: producer
          * 
          * @param operation the value to set
@@ -1013,6 +1014,7 @@ public interface GoogleFirestoreEndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.google.firestore.GoogleFirestoreOperations</code> type.
          * 
+         * Default: setDocument
          * Group: producer
          * 
          * @param operation the value to set
@@ -1457,7 +1459,9 @@ public interface GoogleFirestoreEndpointBuilderFactory {
             return "CamelGoogleFirestoreMerge";
         }
         /**
-         * List of field paths to merge when using merge option.
+         * List of field paths to merge when using merge option. A dotted name
+         * such as address.city is the nested field city of address; a
+         * com.google.cloud.firestore.FieldPath element is used as it is.
          * 
          * The option is a: {@code java.util.List<String>} type.
          * 

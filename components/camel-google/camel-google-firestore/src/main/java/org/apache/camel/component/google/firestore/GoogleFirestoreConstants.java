@@ -86,7 +86,10 @@ public final class GoogleFirestoreConstants {
               javaType = "Boolean", defaultValue = "false")
     public static final String MERGE = "CamelGoogleFirestoreMerge";
 
-    @Metadata(label = "producer", description = "List of field paths to merge when using merge option.",
+    @Metadata(label = "producer",
+              description = "List of field paths to merge when using merge option. A dotted name such as address.city is"
+                            + " the nested field city of address; a com.google.cloud.firestore.FieldPath element is used"
+                            + " as it is.",
               javaType = "java.util.List<String>")
     public static final String MERGE_FIELDS = "CamelGoogleFirestoreMergeFields";
 

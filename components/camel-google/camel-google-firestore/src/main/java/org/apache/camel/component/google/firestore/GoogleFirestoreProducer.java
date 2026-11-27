@@ -112,10 +112,13 @@ public class GoogleFirestoreProducer extends DefaultProducer {
 
         if (Boolean.TRUE.equals(merge)) {
             @SuppressWarnings("unchecked")
-            List<String> mergeFields = exchange.getIn().getHeader(GoogleFirestoreConstants.MERGE_FIELDS, List.class);
+            List<Object> mergeFields = exchange.getIn().getHeader(GoogleFirestoreConstants.MERGE_FIELDS, List.class);
             if (mergeFields != null && !mergeFields.isEmpty()) {
+                // a dotted name such as address.city is the nested field city of address, as for updateDocument;
+                // a FieldPath is used as it is (for a field whose name contains a dot)
                 List<FieldPath> fieldPaths = mergeFields.stream()
-                        .map(FieldPath::of)
+                        .map(field -> field instanceof FieldPath fieldPath
+                                ? fieldPath : FieldPath.fromDotSeparatedString(field.toString()))
                         .toList();
                 future = docRef.set(data, SetOptions.mergeFieldPaths(fieldPaths));
             } else {
