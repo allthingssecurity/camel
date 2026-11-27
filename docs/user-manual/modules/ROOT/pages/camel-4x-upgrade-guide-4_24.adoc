@@ -4651,6 +4651,15 @@ message with no body inserted an empty row (or failed with a database constraint
 `FETCH` failed with a `NoSuchMethodException` for `org.jooq.Query.<init>()`. Send the record, or the `org.jooq.Query`, in
 the message body. The `operation` option also no longer lists `CONSUME`, which was never a valid value.
 
+=== camel-jooq - a consumer or a NONE producer whose entityType class cannot be found fails to start
+
+When the class name in the URI path cannot be found (for example a typo, as in `jooq:com.foo.BokRecord`), creating a
+consumer or a producer with the operation `NONE` now fails with an `IllegalArgumentException` that names the class, so
+the route does not start (with `lazyStartProducer`, the first message fails). Before, the route started, and then the
+consumer failed at every poll, and the producer for every message, with a `NullPointerException` (wrapped in a
+`RuntimeCamelException` for the consumer) that did not name the class. A producer with the operation `EXECUTE` or
+`FETCH` does not use the `entityType`, and still starts.
+
 === camel-jsonpath - easy predicates with `+<=+` and `+>=+` match the boundary value
 
 An easy predicate (such as `+store.book.price <= 10+` or `+$.store.book.price >= 10+`) now matches the boundary

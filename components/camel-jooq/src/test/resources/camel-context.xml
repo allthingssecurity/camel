@@ -85,9 +85,9 @@
             <log message="Fetched ${body}"/>
         </route>
 
-        <!-- SQL: consume -->
+        <!-- Consume and delete entity (the consumer reads all the rows of the table of the entityType, it does not use the query option) -->
         <route id="sql-consume">
-            <from uri="jooq://org.apache.camel.component.jooq.db.tables.records.BookStoreRecord?query=select * from book_store x where x.name = 'test'"/>
+            <from uri="jooq://org.apache.camel.component.jooq.db.tables.records.BookStoreRecord"/>
             <log message="Fetched ${body}"/>
         </route>
     </camelContext>

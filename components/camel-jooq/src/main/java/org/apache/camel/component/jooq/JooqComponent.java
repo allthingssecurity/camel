@@ -36,7 +36,7 @@ public class JooqComponent extends HealthCheckComponent {
 
         JooqEndpoint endpoint = new JooqEndpoint(uri, this, conf);
         setProperties(endpoint, parameters);
-        initConfiguration(getCamelContext(), conf, remaining);
+        initConfiguration(getCamelContext(), endpoint, conf, remaining);
         return endpoint;
     }
 
@@ -48,7 +48,8 @@ public class JooqComponent extends HealthCheckComponent {
         this.configuration = jooqConfiguration;
     }
 
-    private static void initConfiguration(CamelContext camelContext, JooqConfiguration configuration, String remaining) {
+    private static void initConfiguration(
+            CamelContext camelContext, JooqEndpoint endpoint, JooqConfiguration configuration, String remaining) {
         if (remaining == null) {
             return;
         }
@@ -62,6 +63,10 @@ public class JooqComponent extends HealthCheckComponent {
         Class<?> type = camelContext.getClassResolver().resolveClass(className);
         if (type != null) {
             configuration.setEntityType(type);
+        } else if (!className.isEmpty()) {
+            // not an error here: the producer with a query or a query in the body does not use the entityType. The
+            // consumer and the NONE operation fail with this class name when they are created.
+            endpoint.setUnresolvedEntityType(className);
         }
 
         if (parts.length > 1) {

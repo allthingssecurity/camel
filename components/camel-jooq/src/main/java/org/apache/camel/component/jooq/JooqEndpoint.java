@@ -56,6 +56,8 @@ import org.jooq.ResultQuery;
 public class JooqEndpoint extends ScheduledPollEndpoint {
 
     private Expression producerExpression;
+    // the class name of the URI path when it cannot be resolved, for the error of the consumer and the NONE operation
+    private String unresolvedEntityType;
 
     @UriParam
     private JooqConfiguration configuration;
@@ -92,6 +94,9 @@ public class JooqEndpoint extends ScheduledPollEndpoint {
         switch (configuration.getOperation()) {
             case NONE:
                 type = configuration.getEntityType();
+                if (type == null) {
+                    throw noEntityType("The producer with the operation NONE");
+                }
                 hint = "operation NONE needs a record of the entityType in the message body";
                 break;
             case EXECUTE:
@@ -127,9 +132,24 @@ public class JooqEndpoint extends ScheduledPollEndpoint {
 
     @Override
     public Consumer createConsumer(Processor processor) throws Exception {
+        if (configuration.getEntityType() == null) {
+            throw noEntityType("The consumer");
+        }
         JooqConsumer consumer = new JooqConsumer(this, processor);
         configureConsumer(consumer);
         return consumer;
+    }
+
+    void setUnresolvedEntityType(String unresolvedEntityType) {
+        this.unresolvedEntityType = unresolvedEntityType;
+    }
+
+    private IllegalArgumentException noEntityType(String user) {
+        if (unresolvedEntityType != null) {
+            return new IllegalArgumentException(
+                    user + " needs the entityType, but the class " + unresolvedEntityType + " cannot be found");
+        }
+        return new IllegalArgumentException(user + " needs the entityType, but it is not set");
     }
 
 }
