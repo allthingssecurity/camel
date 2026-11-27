@@ -106,13 +106,7 @@ public class BrowseEndpoint extends DefaultEndpoint implements BrowsableEndpoint
     public Producer createProducer() throws Exception {
         return new DefaultProducer(this) {
             public void process(Exchange exchange) throws Exception {
-                boolean accept = true;
-                if (filter != null) {
-                    accept = filter.test(exchange);
-                }
-                if (accept) {
-                    onExchange(exchange);
-                }
+                onExchange(exchange);
             }
         };
     }
@@ -151,6 +145,20 @@ public class BrowseEndpoint extends DefaultEndpoint implements BrowsableEndpoint
      * @throws Exception is thrown if failed to process the exchange
      */
     protected void onExchange(Exchange exchange) throws Exception {
+        // the filter only chooses the exchanges that are kept for browsing: the route that consumes from this endpoint
+        // gets every exchange
+        if (filter == null || filter.test(exchange)) {
+            addExchange(exchange);
+        }
+
+        // now fire the consumer
+        Processor processor = onExchangeProcessor;
+        if (processor != null) {
+            processor.process(exchange);
+        }
+    }
+
+    private void addExchange(Exchange exchange) {
         List<Exchange> list = exchanges;
         if (browseLimit > 0) {
             // add first and then remove the oldest from the list itself: a sub list is only a view that keeps them
@@ -168,12 +176,6 @@ public class BrowseEndpoint extends DefaultEndpoint implements BrowsableEndpoint
             }
         } else {
             list.add(exchange);
-        }
-
-        // now fire the consumer
-        Processor processor = onExchangeProcessor;
-        if (processor != null) {
-            processor.process(exchange);
         }
     }
 
