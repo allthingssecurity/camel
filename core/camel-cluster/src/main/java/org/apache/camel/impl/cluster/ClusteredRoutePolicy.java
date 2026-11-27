@@ -160,8 +160,7 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
             this.camelContext = camelContext;
             this.camelContext.addStartupListener(this.listener);
             this.camelContext.getManagementStrategy().addEventNotifier(this.listener);
-            this.leadershipExecutor = camelContext.getExecutorServiceManager()
-                    .newThreadPool(this, THREAD_NAME, newLeadershipThreadPoolProfile());
+            this.leadershipExecutor = newLeadershipExecutor();
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -213,6 +212,11 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
         // Increase number of managed routes by this policy, acquire policy view on first run
         retainLock.lock();
         try {
+            if (leadershipExecutor == null) {
+                // the CamelContext was stopped, which shut this policy down, and is started again: the routes are
+                // created again with this policy, so it is made usable again before it takes the leadership
+                restart();
+            }
             this.refCount.retain();
         } finally {
             retainLock.unlock();
@@ -273,6 +277,18 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
     }
 
     @Override
+    public void onStart(Route route) {
+        super.onStart(route);
+        // A route added to a running CamelContext while this node is the leader is started by the route controller
+        // (see onInit). If the leadership was lost before the route started, the policy thread could not stop it, so
+        // it applies the leadership again now (it stops the route once started, see doStopManagedRoutes).
+        if (!isLeader() && startedRoutes.contains(route)) {
+            reapply.set(true);
+            handOverLeadershipChange();
+        }
+    }
+
+    @Override
     protected void doShutdown() throws Exception {
         retainLock.lock();
         try {
@@ -292,6 +308,8 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
             camelContext.getManagementStrategy().removeEventNotifier(listener);
             ExecutorService executor = leadershipExecutor;
             if (executor != null) {
+                // a route of this policy created again (CamelContext started again) makes it usable again (onInit)
+                leadershipExecutor = null;
                 camelContext.getExecutorServiceManager().shutdownNow(executor);
             }
             ScheduledExecutorService scheduler = initialDelayExecutor;
@@ -307,6 +325,25 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
                 camelContext.getExecutorServiceManager().shutdownNow(retry);
             }
         }
+    }
+
+    private void restart() {
+        LOG.debug("ClusteredRoutePolicy for namespace {} is used again after it was shut down", namespace);
+        // a change queued when the executor was shut down was dropped, and the CamelContext starts again
+        leadershipChangePending.set(false);
+        reapply.set(false);
+        retryScheduled.set(false);
+        contextStarted.set(false);
+        contextResumed = false;
+        initialDelayElapsed = false;
+        // the routes are created while the CamelContext initializes: start them once it has started
+        startManagedRoutesEarly = true;
+        camelContext.getManagementStrategy().addEventNotifier(listener);
+        leadershipExecutor = newLeadershipExecutor();
+    }
+
+    private ExecutorService newLeadershipExecutor() {
+        return camelContext.getExecutorServiceManager().newThreadPool(this, THREAD_NAME, newLeadershipThreadPoolProfile());
     }
 
     // The view and the cluster service are called without holding the policy lock. The view holds its own lock while
@@ -468,12 +505,14 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
                 LOG.debug("Starting route '{}'", route.getId());
                 try {
                     camelContext.getRouteController().startRoute(route.getId());
-                } catch (Exception e) {
+                } catch (Throwable e) {
+                    // an Error (such as a NoClassDefFoundError) is a failed start too
                     failed = true;
                     int attempt = failedStarts.merge(route.getId(), 1, Integer::sum);
                     handleFailure("Failed to start route " + route.getId() + " (attempt #" + attempt + "). Trying again in "
                                   + retryDelay.toMillis() + " millis while this node is the leader.",
                             e);
+                    rethrowIfFatal(e);
                     continue;
                 }
                 Integer failures = failedStarts.remove(route.getId());
@@ -526,7 +565,14 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
         }
     }
 
-    private void handleFailure(String message, Exception e) {
+    private void rethrowIfFatal(Throwable e) {
+        if (e instanceof VirtualMachineError error) {
+            scheduleRetry();
+            throw error;
+        }
+    }
+
+    private void handleFailure(String message, Throwable e) {
         if (getExceptionHandler() != null) {
             getExceptionHandler().handleException(message, e);
         } else {
@@ -553,12 +599,17 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
         // each route on its own, so a route that fails to stop does not keep the others running
         for (Route route : startedRoutes) {
             ServiceStatus status = getStatus(route);
-            if (status != null && status.isStoppable()) {
+            if (status == ServiceStatus.Starting) {
+                // the route controller is starting it (a route added while this node was the leader): stop it later
+                LOG.debug("Will stop route '{}' once it has started", route.getId());
+                stopFailed = true;
+            } else if (status != null && status.isStoppable()) {
                 LOG.debug("Stopping route '{}'", route.getId());
                 try {
                     stopRoute(route);
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     handleFailure("Failed to stop route " + route.getId(), e);
+                    rethrowIfFatal(e);
                     if (getStatus(route).isStoppable()) {
                         // still running: it stays with the started routes, and the stop is tried again
                         stopFailed = true;
@@ -646,9 +697,12 @@ public final class ClusteredRoutePolicy extends RoutePolicySupport implements Ca
         leadershipChangePending.getAndSet(false);
         try {
             setLeader();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             LOG.warn("Error applying leadership change of ClusteredRoutePolicy for namespace {}. This exception is ignored.",
                     namespace, e);
+            if (e instanceof VirtualMachineError error) {
+                throw error;
+            }
         }
     }
 
