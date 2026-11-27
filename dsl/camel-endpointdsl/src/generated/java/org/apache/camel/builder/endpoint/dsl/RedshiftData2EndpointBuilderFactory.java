@@ -53,7 +53,6 @@ public interface RedshiftData2EndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.aws2.redshift.data.RedshiftData2Operations</code> type.
          * 
-         * Required: true
          * Group: producer
          * 
          * @param operation the value to set
@@ -72,7 +71,6 @@ public interface RedshiftData2EndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.aws2.redshift.data.RedshiftData2Operations</code> type.
          * 
-         * Required: true
          * Group: producer
          * 
          * @param operation the value to set
@@ -557,7 +555,7 @@ public interface RedshiftData2EndpointBuilderFactory {
          * 
          * Syntax: <code>aws2-redshift-data:label</code>
          * 
-         * Path parameter: label (required)
+         * Path parameter: label
          * Logical name
          * 
          * @param path label
@@ -576,7 +574,7 @@ public interface RedshiftData2EndpointBuilderFactory {
          * 
          * Syntax: <code>aws2-redshift-data:label</code>
          * 
-         * Path parameter: label (required)
+         * Path parameter: label
          * Logical name
          * 
          * @param componentName to use a custom component name for the endpoint
@@ -886,9 +884,11 @@ public interface RedshiftData2EndpointBuilderFactory {
             return "CamelAwsRedshiftDataSqlStatement";
         }
         /**
-         * The parameters for the SQL statement.
+         * The parameters for the SQL statement of executeStatement and
+         * batchExecuteStatement.
          * 
-         * The option is a: {@code List<SqlParameterList>} type.
+         * The option is a: {@code
+         * List<software.amazon.awssdk.services.redshiftdata.model.SqlParameter>} type.
          * 
          * Group: producer
          * 
@@ -910,6 +910,93 @@ public interface RedshiftData2EndpointBuilderFactory {
          */
         public String awsRedshiftDataSqlStatementList() {
             return "CamelAwsRedshiftDataSqlStatementList";
+        }
+        /**
+         * The token of the page of results to return, from the nextToken of the
+         * response of the previous call. Used by listDatabases, listSchemas,
+         * listStatements, listTables, describeTable and getStatementResult.
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code AwsRedshiftDataNextToken}.
+         */
+        public String awsRedshiftDataNextToken() {
+            return "CamelAwsRedshiftDataNextToken";
+        }
+        /**
+         * The number of seconds that executeStatement, batchExecuteStatement
+         * and getStatementResult wait for the statement to finish before they
+         * return.
+         * 
+         * The option is a: {@code Integer} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code
+         * AwsRedshiftDataWaitTimeSeconds}.
+         */
+        public String awsRedshiftDataWaitTimeSeconds() {
+            return "CamelAwsRedshiftDataWaitTimeSeconds";
+        }
+        /**
+         * How batchExecuteStatement runs the statements: in one transaction
+         * (TRANSACTION) or each statement committed on its own (AUTO_COMMIT).
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code AwsRedshiftDataExecutionMode}.
+         */
+        public String awsRedshiftDataExecutionMode() {
+            return "CamelAwsRedshiftDataExecutionMode";
+        }
+        /**
+         * The format of the result of executeStatement and
+         * batchExecuteStatement: JSON (the default) or CSV. The
+         * getStatementResult operation reads JSON results only: a CSV result
+         * can only be read with GetStatementResultV2 of the AWS API, which this
+         * component does not offer.
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code AwsRedshiftDataResultFormat}.
+         */
+        public String awsRedshiftDataResultFormat() {
+            return "CamelAwsRedshiftDataResultFormat";
+        }
+        /**
+         * The ID of the session that executeStatement and batchExecuteStatement
+         * run in, as a previous response with
+         * CamelAwsRedshiftDataSessionKeepAliveSeconds returns it.
+         * 
+         * The option is a: {@code String} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code AwsRedshiftDataSessionId}.
+         */
+        public String awsRedshiftDataSessionId() {
+            return "CamelAwsRedshiftDataSessionId";
+        }
+        /**
+         * The number of seconds that the session of executeStatement and
+         * batchExecuteStatement stays open after the statement ends, so that a
+         * later statement can run in it.
+         * 
+         * The option is a: {@code Integer} type.
+         * 
+         * Group: producer
+         * 
+         * @return the name of the header {@code
+         * AwsRedshiftDataSessionKeepAliveSeconds}.
+         */
+        public String awsRedshiftDataSessionKeepAliveSeconds() {
+            return "CamelAwsRedshiftDataSessionKeepAliveSeconds";
         }
     }
     static RedshiftData2EndpointBuilder endpointBuilder(String componentName, String path) {
