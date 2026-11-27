@@ -45,7 +45,9 @@ public interface CassandraEndpointBuilderFactory {
             return (AdvancedCassandraEndpointConsumerBuilder) this;
         }
         /**
-         * Cluster name.
+         * Cluster name. Deprecation note: Not used: the component does not pass
+         * it to the driver, and the session builder of the Cassandra Java
+         * Driver 4.x has no cluster name setting.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -54,6 +56,7 @@ public interface CassandraEndpointBuilderFactory {
          * @param clusterName the value to set
          * @return the dsl builder
          */
+        @Deprecated
         default CassandraEndpointConsumerBuilder clusterName(String clusterName) {
             doSetProperty("clusterName", clusterName);
             return this;
@@ -842,6 +845,46 @@ public interface CassandraEndpointBuilderFactory {
             return this;
         }
         /**
+         * The consistency level of the prepared statements: the cql option and
+         * a CQL String in the CamelCqlQuery header, when prepareStatements is
+         * true. It is not used for a simple statement (prepareStatements=false)
+         * or a SimpleStatement in the header. If not set, the driver uses the
+         * consistency level of its configuration.
+         * 
+         * The option is a:
+         * <code>com.datastax.oss.driver.api.core.DefaultConsistencyLevel</code>
+         * type.
+         * 
+         * Group: advanced
+         * 
+         * @param consistencyLevel the value to set
+         * @return the dsl builder
+         */
+        default AdvancedCassandraEndpointConsumerBuilder consistencyLevel(com.datastax.oss.driver.api.core.DefaultConsistencyLevel consistencyLevel) {
+            doSetProperty("consistencyLevel", consistencyLevel);
+            return this;
+        }
+        /**
+         * The consistency level of the prepared statements: the cql option and
+         * a CQL String in the CamelCqlQuery header, when prepareStatements is
+         * true. It is not used for a simple statement (prepareStatements=false)
+         * or a SimpleStatement in the header. If not set, the driver uses the
+         * consistency level of its configuration.
+         * 
+         * The option will be converted to a
+         * <code>com.datastax.oss.driver.api.core.DefaultConsistencyLevel</code>
+         * type.
+         * 
+         * Group: advanced
+         * 
+         * @param consistencyLevel the value to set
+         * @return the dsl builder
+         */
+        default AdvancedCassandraEndpointConsumerBuilder consistencyLevel(String consistencyLevel) {
+            doSetProperty("consistencyLevel", consistencyLevel);
+            return this;
+        }
+        /**
          * To use a specific comma separated list of Extra Type codecs. Possible
          * values are: BLOB_TO_ARRAY, BOOLEAN_LIST_TO_ARRAY, BYTE_LIST_TO_ARRAY,
          * SHORT_LIST_TO_ARRAY, INT_LIST_TO_ARRAY, LONG_LIST_TO_ARRAY,
@@ -883,6 +926,7 @@ public interface CassandraEndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.cassandra.ResultSetConversionStrategy</code> type.
          * 
+         * Default: ALL
          * Group: advanced
          * 
          * @param resultSetConversionStrategy the value to set
@@ -899,6 +943,7 @@ public interface CassandraEndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.cassandra.ResultSetConversionStrategy</code> type.
          * 
+         * Default: ALL
          * Group: advanced
          * 
          * @param resultSetConversionStrategy the value to set
@@ -951,7 +996,9 @@ public interface CassandraEndpointBuilderFactory {
         }
 
         /**
-         * Cluster name.
+         * Cluster name. Deprecation note: Not used: the component does not pass
+         * it to the driver, and the session builder of the Cassandra Java
+         * Driver 4.x has no cluster name setting.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -960,6 +1007,7 @@ public interface CassandraEndpointBuilderFactory {
          * @param clusterName the value to set
          * @return the dsl builder
          */
+        @Deprecated
         default CassandraEndpointProducerBuilder clusterName(String clusterName) {
             doSetProperty("clusterName", clusterName);
             return this;
@@ -1109,6 +1157,46 @@ public interface CassandraEndpointBuilderFactory {
             return this;
         }
         /**
+         * The consistency level of the prepared statements: the cql option and
+         * a CQL String in the CamelCqlQuery header, when prepareStatements is
+         * true. It is not used for a simple statement (prepareStatements=false)
+         * or a SimpleStatement in the header. If not set, the driver uses the
+         * consistency level of its configuration.
+         * 
+         * The option is a:
+         * <code>com.datastax.oss.driver.api.core.DefaultConsistencyLevel</code>
+         * type.
+         * 
+         * Group: advanced
+         * 
+         * @param consistencyLevel the value to set
+         * @return the dsl builder
+         */
+        default AdvancedCassandraEndpointProducerBuilder consistencyLevel(com.datastax.oss.driver.api.core.DefaultConsistencyLevel consistencyLevel) {
+            doSetProperty("consistencyLevel", consistencyLevel);
+            return this;
+        }
+        /**
+         * The consistency level of the prepared statements: the cql option and
+         * a CQL String in the CamelCqlQuery header, when prepareStatements is
+         * true. It is not used for a simple statement (prepareStatements=false)
+         * or a SimpleStatement in the header. If not set, the driver uses the
+         * consistency level of its configuration.
+         * 
+         * The option will be converted to a
+         * <code>com.datastax.oss.driver.api.core.DefaultConsistencyLevel</code>
+         * type.
+         * 
+         * Group: advanced
+         * 
+         * @param consistencyLevel the value to set
+         * @return the dsl builder
+         */
+        default AdvancedCassandraEndpointProducerBuilder consistencyLevel(String consistencyLevel) {
+            doSetProperty("consistencyLevel", consistencyLevel);
+            return this;
+        }
+        /**
          * To use a specific comma separated list of Extra Type codecs. Possible
          * values are: BLOB_TO_ARRAY, BOOLEAN_LIST_TO_ARRAY, BYTE_LIST_TO_ARRAY,
          * SHORT_LIST_TO_ARRAY, INT_LIST_TO_ARRAY, LONG_LIST_TO_ARRAY,
@@ -1150,6 +1238,7 @@ public interface CassandraEndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.cassandra.ResultSetConversionStrategy</code> type.
          * 
+         * Default: ALL
          * Group: advanced
          * 
          * @param resultSetConversionStrategy the value to set
@@ -1166,6 +1255,7 @@ public interface CassandraEndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.cassandra.ResultSetConversionStrategy</code> type.
          * 
+         * Default: ALL
          * Group: advanced
          * 
          * @param resultSetConversionStrategy the value to set
@@ -1219,7 +1309,9 @@ public interface CassandraEndpointBuilderFactory {
         }
 
         /**
-         * Cluster name.
+         * Cluster name. Deprecation note: Not used: the component does not pass
+         * it to the driver, and the session builder of the Cassandra Java
+         * Driver 4.x has no cluster name setting.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -1228,6 +1320,7 @@ public interface CassandraEndpointBuilderFactory {
          * @param clusterName the value to set
          * @return the dsl builder
          */
+        @Deprecated
         default CassandraEndpointBuilder clusterName(String clusterName) {
             doSetProperty("clusterName", clusterName);
             return this;
@@ -1334,6 +1427,46 @@ public interface CassandraEndpointBuilderFactory {
         }
 
         /**
+         * The consistency level of the prepared statements: the cql option and
+         * a CQL String in the CamelCqlQuery header, when prepareStatements is
+         * true. It is not used for a simple statement (prepareStatements=false)
+         * or a SimpleStatement in the header. If not set, the driver uses the
+         * consistency level of its configuration.
+         * 
+         * The option is a:
+         * <code>com.datastax.oss.driver.api.core.DefaultConsistencyLevel</code>
+         * type.
+         * 
+         * Group: advanced
+         * 
+         * @param consistencyLevel the value to set
+         * @return the dsl builder
+         */
+        default AdvancedCassandraEndpointBuilder consistencyLevel(com.datastax.oss.driver.api.core.DefaultConsistencyLevel consistencyLevel) {
+            doSetProperty("consistencyLevel", consistencyLevel);
+            return this;
+        }
+        /**
+         * The consistency level of the prepared statements: the cql option and
+         * a CQL String in the CamelCqlQuery header, when prepareStatements is
+         * true. It is not used for a simple statement (prepareStatements=false)
+         * or a SimpleStatement in the header. If not set, the driver uses the
+         * consistency level of its configuration.
+         * 
+         * The option will be converted to a
+         * <code>com.datastax.oss.driver.api.core.DefaultConsistencyLevel</code>
+         * type.
+         * 
+         * Group: advanced
+         * 
+         * @param consistencyLevel the value to set
+         * @return the dsl builder
+         */
+        default AdvancedCassandraEndpointBuilder consistencyLevel(String consistencyLevel) {
+            doSetProperty("consistencyLevel", consistencyLevel);
+            return this;
+        }
+        /**
          * To use a specific comma separated list of Extra Type codecs. Possible
          * values are: BLOB_TO_ARRAY, BOOLEAN_LIST_TO_ARRAY, BYTE_LIST_TO_ARRAY,
          * SHORT_LIST_TO_ARRAY, INT_LIST_TO_ARRAY, LONG_LIST_TO_ARRAY,
@@ -1375,6 +1508,7 @@ public interface CassandraEndpointBuilderFactory {
          * The option is a:
          * <code>org.apache.camel.component.cassandra.ResultSetConversionStrategy</code> type.
          * 
+         * Default: ALL
          * Group: advanced
          * 
          * @param resultSetConversionStrategy the value to set
@@ -1391,6 +1525,7 @@ public interface CassandraEndpointBuilderFactory {
          * The option will be converted to a
          * <code>org.apache.camel.component.cassandra.ResultSetConversionStrategy</code> type.
          * 
+         * Default: ALL
          * Group: advanced
          * 
          * @param resultSetConversionStrategy the value to set
@@ -1522,9 +1657,10 @@ public interface CassandraEndpointBuilderFactory {
         public static final CassandraHeaderNameBuilder INSTANCE = new CassandraHeaderNameBuilder();
 
         /**
-         * The CQL query to execute.
+         * The CQL query to execute: a String, or a
+         * com.datastax.oss.driver.api.core.cql.SimpleStatement.
          * 
-         * The option is a: {@code String} type.
+         * The option is a: {@code Object} type.
          * 
          * Group: producer
          * 

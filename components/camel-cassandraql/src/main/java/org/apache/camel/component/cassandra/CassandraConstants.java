@@ -26,7 +26,9 @@ public final class CassandraConstants {
     /**
      * In Message header: CQL Query
      */
-    @Metadata(label = "producer", description = "The CQL query to execute.", javaType = "String")
+    @Metadata(label = "producer",
+              description = "The CQL query to execute: a String, or a com.datastax.oss.driver.api.core.cql.SimpleStatement.",
+              javaType = "Object")
     public static final String CQL_QUERY = "CamelCqlQuery";
 
     @Metadata(label = "consumer", description = "The resume action to execute when resuming.", javaType = "String")
