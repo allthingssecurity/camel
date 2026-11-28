@@ -28,36 +28,38 @@ import org.springframework.ai.vectorstore.VectorStore;
 public class SpringAiVectorStoreConfiguration implements Cloneable {
 
     @Metadata(required = true, autowired = true)
-    @UriParam(description = "The Spring AI org.springframework.ai.vectorstore.VectorStore that the producer uses, such as a"
+    @UriParam(label = "producer",
+              description = "The Spring AI org.springframework.ai.vectorstore.VectorStore that the producer uses, such as a"
                             + " Qdrant or PGvector vector store. For ADD and for SIMILARITY_SEARCH of a text, the vector store"
                             + " embeds the text with its own embedding model.")
     private VectorStore vectorStore;
 
-    @UriParam(defaultValue = "ADD",
+    @UriParam(label = "producer", defaultValue = "ADD",
               description = "The operation that the producer performs: ADD adds documents, which the vector store embeds;"
                             + " UPSERT writes documents with their vectors as they are, and replaces a document with the"
                             + " same id; DELETE deletes documents by id; SIMILARITY_SEARCH finds the documents most similar"
                             + " to a query. The CamelSpringAiVectorStoreOperation header replaces this option.")
     private SpringAiVectorStoreOperation operation = SpringAiVectorStoreOperation.ADD;
 
-    @UriParam(defaultValue = "5",
+    @UriParam(label = "producer", defaultValue = "5",
               description = "The maximum number of documents that SIMILARITY_SEARCH returns. The value must not be"
                             + " negative. The CamelSpringAiVectorStoreTopK header replaces this option.")
     private int topK = 5;
 
-    @UriParam(defaultValue = "0.0",
+    @UriParam(label = "producer", defaultValue = "0.0",
               description = "The minimum similarity score, from 0 to 1, of the documents that SIMILARITY_SEARCH returns."
                             + " The default 0.0 accepts all documents. The CamelSpringAiVectorStoreSimilarityThreshold"
                             + " header replaces this option.")
     private double similarityThreshold = 0.0;
 
-    @UriParam(description = "The filter on the metadata of the documents for SIMILARITY_SEARCH, in the portable filter"
+    @UriParam(label = "producer",
+              description = "The filter on the metadata of the documents for SIMILARITY_SEARCH, in the portable filter"
                             + " expression syntax of Spring AI, for example country == 'UK' && year >= 2020. The"
-                            + " CamelSpringAiVectorStoreFilterExpression header replaces this option. DELETE does not"
-                            + " delete by filter.")
+                            + " CamelSpringAiVectorStoreFilterExpression header replaces this option. Only"
+                            + " SIMILARITY_SEARCH uses it: DELETE does not delete by filter, and fails without ids.")
     private String filterExpression;
 
-    @UriParam(defaultValue = "false",
+    @UriParam(label = "producer", defaultValue = "false",
               description = "Whether SIMILARITY_SEARCH of a float[] body, such as the vector of spring-ai-embeddings,"
                             + " searches with this vector. By default it searches for the text of the"
                             + " CamelSpringAiEmbeddingInputText header, which the vector store embeds again. The vector"

@@ -49,7 +49,8 @@ public interface SpringAiVectorStoreEndpointBuilderFactory {
          * the portable filter expression syntax of Spring AI, for example
          * country == 'UK' &amp;&amp; year &gt;= 2020. The
          * CamelSpringAiVectorStoreFilterExpression header replaces this option.
-         * DELETE does not delete by filter.
+         * Only SIMILARITY_SEARCH uses it: DELETE does not delete by filter, and
+         * fails without ids.
          * 
          * The option is a: <code>java.lang.String</code> type.
          * 
@@ -430,7 +431,7 @@ public interface SpringAiVectorStoreEndpointBuilderFactory {
         /**
          * The filter on the metadata of the documents for SIMILARITY_SEARCH, in
          * the portable filter expression syntax of Spring AI. It replaces the
-         * filterExpression option.
+         * filterExpression option. DELETE does not use it.
          * 
          * The option is a: {@code String} type.
          * 

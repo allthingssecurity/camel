@@ -40,8 +40,11 @@ import org.springframework.ai.vectorstore.VectorStore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 public class SpringAiVectorStoreComponentTest extends CamelTestSupport {
 
@@ -167,13 +170,10 @@ public class SpringAiVectorStoreComponentTest extends CamelTestSupport {
                 = vectorStore.similaritySearch(SearchRequest.builder().query(inputText).topK(1).build());
         assertThat(searchResults).hasSize(1);
 
+        // ADD stores the text, which the vector store embeds again, and does not put the vector in the metadata
         Document doc = searchResults.get(0);
         assertThat(doc.getText()).isEqualTo(inputText);
-        assertThat(doc.getMetadata()).containsKey("embedding");
-        assertThat(doc.getMetadata()).containsEntry("precomputed_embedding", true);
-
-        float[] storedEmbedding = (float[]) doc.getMetadata().get("embedding");
-        assertThat(storedEmbedding).isEqualTo(embedding);
+        assertThat(doc.getMetadata()).doesNotContainKeys("embedding", "precomputed_embedding");
     }
 
     @Test
@@ -197,10 +197,9 @@ public class SpringAiVectorStoreComponentTest extends CamelTestSupport {
                 .similaritySearch(SearchRequest.builder().query("batch document").topK(10).build());
         assertThat(searchResults).hasSizeGreaterThanOrEqualTo(2);
 
-        // Verify that both documents are present and have the correct metadata
+        // Verify that both documents are present, without the vectors in their metadata
         for (int i = 0; i < inputTexts.size(); i++) {
             final String expectedText = inputTexts.get(i);
-            final float[] expectedEmbedding = embeddings.get(i);
 
             // Find the document that matches our text
             Document doc = searchResults.stream()
@@ -208,12 +207,44 @@ public class SpringAiVectorStoreComponentTest extends CamelTestSupport {
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("Document not found: " + expectedText));
 
-            assertThat(doc.getMetadata()).containsKey("embedding");
-            assertThat(doc.getMetadata()).containsEntry("precomputed_embedding", true);
-
-            float[] storedEmbedding = (float[]) doc.getMetadata().get("embedding");
-            assertThat(storedEmbedding).isEqualTo(expectedEmbedding);
+            assertThat(doc.getMetadata()).doesNotContainKeys("embedding", "precomputed_embedding");
         }
+    }
+
+    @Test
+    public void testAddOfVectorGivesTheVectorStoreTheTextWithoutMetadata() {
+        VectorStore recordingStore = mock(VectorStore.class);
+        context.getRegistry().bind("recordingStore", recordingStore);
+
+        fluentTemplate.to("spring-ai-vector-store:test?operation=ADD&vectorStore=#recordingStore")
+                .withBody(new float[] { 0.9f, 0.8f, 0.7f })
+                .withHeader("CamelSpringAiEmbeddingInputText", "Hello vector")
+                .request(Message.class);
+
+        // A Document has no vector: VectorStore.add embeds the text, and the vector is not passed in the metadata
+        ArgumentCaptor<List<Document>> added = ArgumentCaptor.forClass(List.class);
+        verify(recordingStore).add(added.capture());
+        assertThat(added.getValue()).hasSize(1);
+        assertThat(added.getValue().get(0).getText()).isEqualTo("Hello vector");
+        assertThat(added.getValue().get(0).getMetadata()).isEmpty();
+        verify(recordingStore, never()).upsert(anyList());
+    }
+
+    @Test
+    public void testAddOfVectorsGivesTheVectorStoreTheTextsWithoutMetadata() {
+        VectorStore recordingStore = mock(VectorStore.class);
+        context.getRegistry().bind("recordingStore", recordingStore);
+
+        fluentTemplate.to("spring-ai-vector-store:test?operation=ADD&vectorStore=#recordingStore")
+                .withBody(List.of(new float[] { 0.1f }, new float[] { 0.2f }))
+                .withHeader("CamelSpringAiEmbeddingInputTexts", List.of("First", "Second"))
+                .request(Message.class);
+
+        ArgumentCaptor<List<Document>> added = ArgumentCaptor.forClass(List.class);
+        verify(recordingStore).add(added.capture());
+        assertThat(added.getValue()).extracting(Document::getText).containsExactly("First", "Second");
+        assertThat(added.getValue()).allSatisfy(doc -> assertThat(doc.getMetadata()).isEmpty());
+        verify(recordingStore, never()).upsert(anyList());
     }
 
     @Test
@@ -490,6 +521,43 @@ public class SpringAiVectorStoreComponentTest extends CamelTestSupport {
                 .cause()
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("java.lang.Integer");
+    }
+
+    @Test
+    public void testDeleteWithoutIdsIgnoresFilterExpressionOption() {
+        VectorStore recordingStore = mock(VectorStore.class);
+        context.getRegistry().bind("recordingStore", recordingStore);
+        String uri = "spring-ai-vector-store:test?operation=DELETE&vectorStore=#recordingStore"
+                     + "&filterExpression=RAW(source == 'test')";
+        SpringAiVectorStoreEndpoint endpoint = context.getEndpoint(uri, SpringAiVectorStoreEndpoint.class);
+        assertThat(endpoint.getConfiguration().getFilterExpression()).isEqualTo("source == 'test'");
+
+        // the filter of the endpoint is for SIMILARITY_SEARCH: a DELETE without ids fails, and deletes nothing
+        assertThatThrownBy(() -> fluentTemplate.to(uri).request())
+                .isInstanceOf(CamelExecutionException.class)
+                .cause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DELETE needs the ids of the documents to delete");
+
+        verifyNoInteractions(recordingStore);
+    }
+
+    @Test
+    public void testDeleteWithoutIdsIgnoresFilterExpressionHeader() {
+        VectorStore recordingStore = mock(VectorStore.class);
+        context.getRegistry().bind("recordingStore", recordingStore);
+
+        assertThatThrownBy(
+                () -> fluentTemplate.to("spring-ai-vector-store:test?operation=DELETE&vectorStore=#recordingStore")
+                        .withHeader(SpringAiVectorStoreHeaders.FILTER_EXPRESSION, "source == 'test'")
+                        .withHeader(SpringAiVectorStoreHeaders.DOCUMENT_IDS, List.of())
+                        .request())
+                .isInstanceOf(CamelExecutionException.class)
+                .cause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DELETE needs the ids of the documents to delete");
+
+        verifyNoInteractions(recordingStore);
     }
 
     private List<String> allTexts() {

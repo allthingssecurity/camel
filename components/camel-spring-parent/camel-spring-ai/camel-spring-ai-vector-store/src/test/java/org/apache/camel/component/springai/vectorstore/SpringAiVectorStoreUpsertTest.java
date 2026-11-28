@@ -93,7 +93,7 @@ public class SpringAiVectorStoreUpsertTest extends CamelTestSupport {
         EmbeddedDocument stored = vectorStore.entries.get("doc-1");
         assertThat(stored.embedding()).containsExactly(vector);
         assertThat(stored.document().getText()).isEqualTo("Hello world");
-        // UPSERT does not write the embedding and precomputed_embedding metadata of ADD
+        // UPSERT writes no metadata of its own
         assertThat(stored.document().getMetadata()).isEmpty();
     }
 
