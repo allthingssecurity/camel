@@ -108,7 +108,7 @@ public class QdrantVectorStoreUpsertIT extends CamelTestSupport {
                     List<Document> documents = found.getBody(List.class);
                     assertThat(documents).extracting(Document::getId).containsExactly(catId, kittenId);
                     assertThat(documents).extracting(Document::getText).containsExactly("A cat", "A kitten");
-                    // UPSERT does not write the embedding and precomputed_embedding metadata of ADD
+                    // UPSERT writes no metadata of its own
                     assertThat(documents.get(0).getMetadata()).doesNotContainKeys("embedding", "precomputed_embedding");
                 });
     }

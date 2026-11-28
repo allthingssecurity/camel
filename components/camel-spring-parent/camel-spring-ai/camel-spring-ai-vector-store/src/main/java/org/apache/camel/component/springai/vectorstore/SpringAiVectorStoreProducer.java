@@ -17,7 +17,6 @@
 package org.apache.camel.component.springai.vectorstore;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -80,14 +79,14 @@ public class SpringAiVectorStoreProducer extends DefaultProducer {
 
         // The input text headers of the embeddings component belong to the vector(s) in the body: a leftover
         // header must not replace a Document or text body
-        if (body instanceof float[] floats) {
+        if (body instanceof float[]) {
             String inputText = message.getHeader(INPUT_TEXT, String.class);
             if (inputText == null) {
                 throw new IllegalArgumentException(
                         "ADD of a float[] body needs the " + INPUT_TEXT + " header with the text of the embedding");
             }
-            // Create document from embedding component output with pre-computed embedding
-            documents.add(createDocumentWithEmbedding(inputText, floats));
+            // A Document has no vector, so the vector store embeds the text again: UPSERT writes the vector itself
+            documents.add(new Document(inputText));
         } else if (body instanceof List<?> list && !list.isEmpty() && list.get(0) instanceof float[]) {
             List<String> inputTexts = message.getHeader(INPUT_TEXTS, List.class);
             if (inputTexts == null || inputTexts.size() != list.size()) {
@@ -97,14 +96,14 @@ public class SpringAiVectorStoreProducer extends DefaultProducer {
                                                    + (inputTexts == null ? "no header" : inputTexts.size() + " texts")
                                                    + " for " + list.size() + " embeddings");
             }
-            // Create documents with pre-computed embeddings
+            // The vector store embeds the texts again, as for a float[] body
             for (int i = 0; i < list.size(); i++) {
-                if (!(list.get(i) instanceof float[] floats)) {
+                if (!(list.get(i) instanceof float[])) {
                     throw new IllegalArgumentException(
                             "ADD of a List of float[] body has an element of type " + typeName(list.get(i))
                                                        + " at index " + i);
                 }
-                documents.add(createDocumentWithEmbedding(inputTexts.get(i), floats));
+                documents.add(new Document(inputTexts.get(i)));
             }
         } else if (body instanceof Document doc) {
             documents.add(doc);
@@ -254,20 +253,6 @@ public class SpringAiVectorStoreProducer extends DefaultProducer {
         return value == null ? "null" : value.getClass().getName();
     }
 
-    /**
-     * Creates a Document with pre-computed embedding stored in metadata. The embedding is stored in metadata with a
-     * special key that can be used by vector stores that support pre-computed embeddings.
-     */
-    private Document createDocumentWithEmbedding(String text, float[] embedding) {
-        Map<String, Object> metadata = new HashMap<>();
-        // Store the embedding in metadata with a standard key
-        // Note: Most vector stores will ignore this and compute their own embeddings,
-        // but custom implementations can use it
-        metadata.put("embedding", embedding);
-        metadata.put("precomputed_embedding", true);
-        return new Document(text, metadata);
-    }
-
     private void processDelete(Exchange exchange, VectorStore vectorStore) {
         final Message message = exchange.getMessage();
 
@@ -278,27 +263,15 @@ public class SpringAiVectorStoreProducer extends DefaultProducer {
             documentIds = message.getHeader(SpringAiVectorStoreHeaders.DOCUMENT_IDS, List.class);
         }
 
-        if (documentIds != null && !documentIds.isEmpty()) {
-            vectorStore.delete(documentIds);
-            message.setHeader(SpringAiVectorStoreHeaders.DOCUMENTS_DELETED, documentIds.size());
-        } else {
-            // Check for filter expression deletion
-            String filterExpression = message.getHeader(
-                    SpringAiVectorStoreHeaders.FILTER_EXPRESSION,
-                    getEndpoint().getConfiguration().getFilterExpression(),
-                    String.class);
-
-            if (filterExpression != null) {
-                // Delete by filter is not directly supported in the base VectorStore interface
-                // It would require implementation-specific handling
-                throw new UnsupportedOperationException(
-                        "Delete by filter expression is not supported by all vector stores. " +
-                                                        "Please use document IDs instead.");
-            } else {
-                throw new IllegalArgumentException(
-                        "Either document IDs or filter expression must be provided for DELETE operation");
-            }
+        // The filter expression is for SIMILARITY_SEARCH: DELETE does not delete by filter, so without ids it fails
+        if (documentIds == null || documentIds.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "DELETE needs the ids of the documents to delete in the body, or in the "
+                                               + SpringAiVectorStoreHeaders.DOCUMENT_IDS
+                                               + " header when the message has no body");
         }
+        vectorStore.delete(documentIds);
+        message.setHeader(SpringAiVectorStoreHeaders.DOCUMENTS_DELETED, documentIds.size());
     }
 
     /**

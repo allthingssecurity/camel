@@ -4089,6 +4089,19 @@ SIMILARITY_SEARCH with a `float[]` body (after spring-ai-embeddings) now searche
 `CamelSpringAiEmbeddingInputText` header, and fails without it. Before, it searched for the text of
 `float[].toString()`.
 
+=== camel-spring-ai-vector-store - ADD of a vector adds no metadata, and DELETE without ids does not look at the filter
+
+ADD of a `float[]` or a List of `float[]` body (the output of spring-ai-embeddings) no longer puts the vector in the
+`embedding` metadata of the document, with `precomputed_embedding` set to `true`. The Spring AI vector stores did not
+read this metadata: they embedded the text again, as they still do, and stored the metadata with the document, so the
+vector ended up in the payload of a Qdrant point, for example. ADD now gives the vector store the text alone. To store
+the vector of spring-ai-embeddings itself, use the UPSERT operation.
+
+A DELETE without ids, in the body or in the `CamelSpringAiVectorStoreDocumentIds` header, now always fails with an
+`IllegalArgumentException`. Before, it failed with an `UnsupportedOperationException` when the `filterExpression`
+option or the `CamelSpringAiVectorStoreFilterExpression` header was set. DELETE does not delete by filter; the filter
+is only used by SIMILARITY_SEARCH.
+
 === camel-spring-batch - the CamelSpringBatchJobName header needs jobFromHeader=true
 
 The producer now takes the job name from the `CamelSpringBatchJobName` header only when the endpoint has
